@@ -21,15 +21,19 @@ jobs:
         run: |
           pip install requests pandas pyarrow python-dotenv
 
-      - name: Run Feature Pipeline
+      - name: Run Pipeline and Compute Features
         env:
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
-        run: python src/feature_pipeline/run_feature_pipeline.py
+        run: |
+          python src/feature_pipeline/run_feature_pipeline.py
+          python src/feature_pipeline/compute_features.py
 
-      - name: Commit and Push Parquet
+      - name: Commit and Push Data
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add data/raw/*.parquet
-          git commit -m "auto: update air quality data" || exit 0
+          # -f erzwingt das Hinzufügen, auch wenn data/ in .gitignore steht
+          git add -f data/raw/*.parquet
+          git add -f data/processed/*.parquet
+          git commit -m "auto: update air quality data and features" || echo "No changes to commit"
           git push
