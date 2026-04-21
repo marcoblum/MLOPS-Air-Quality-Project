@@ -1,1 +1,19 @@
+# Environments
 .env
+.venv
+env/
+venv/
+bin/
+obj/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data Storage (Das ist der wichtige Teil!)
+# Wir ignorieren den gesamten Datenordner lokal
+data/
+
+# Aber wir wollen, dass die Ordnerstruktur auf GitHub existiert
+# (Dafür nutzt man einen Trick mit .gitkeep, falls nötig)
