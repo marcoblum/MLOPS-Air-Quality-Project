@@ -19,21 +19,23 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install requests pandas pyarrow python-dotenv
+          pip install requests pandas pyarrow python-dotenv scikit-learn joblib
 
-      - name: Run Pipeline and Compute Features
+      - name: Run Pipeline, Features and Train Model
         env:
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
         run: |
           python src/feature_pipeline/run_feature_pipeline.py
           python src/feature_pipeline/compute_features.py
+          python src/training_pipeline/train_model.py
 
-      - name: Commit and Push Data
+      - name: Commit and Push Data and Model
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # -f erzwingt das Hinzufügen, auch wenn data/ in .gitignore steht
+          # Wir fügen die Daten und das Modell hinzu
           git add -f data/raw/*.parquet
           git add -f data/processed/*.parquet
-          git commit -m "auto: update air quality data and features" || echo "No changes to commit"
+          git add -f models/*.pkl
+          git commit -m "auto: update data, features and model" || echo "No changes to commit"
           git push
