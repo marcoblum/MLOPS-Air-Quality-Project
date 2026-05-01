@@ -9,12 +9,29 @@ def train_model():
     # 1. Daten laden
     df = pd.read_parquet("data/processed/features_latest.parquet")
     
-    # 2. Target definieren: Wir wollen den PM25 Wert von der NÄCHSTEN Stunde vorhersagen
-    # Dafür shiften wir die pm25 Spalte um -1
+    # --- SCHRITT 2: Target definieren & Daten vorbereiten ---
+    
+    # Das Modell soll lernen, den PM2.5 Wert der NÄCHSTEN Stunde vorherzusagen
+    # .shift(-1) zieht den Wert aus der Zukunft eine Zeile hoch in die aktuelle Zeile
     df['target'] = df['pm25'].shift(-1)
     
-    # Letzte Zeile löschen (da wir dort kein Target für die Zukunft haben)
+    # Durch das Shifting hat die allerletzte Zeile kein Target mehr (NaN)
+    # Zudem entfernen wir Zeilen, die durch Lags in compute_features entstanden sind
     df = df.dropna()
+
+    # --- SCHRITT 3: Features (X) und Target (y) definieren ---
+
+    # Hier listest du alle "Hinweise" auf, die das Modell nutzen darf.
+    # Wir nehmen die neuen Wetter-Features aus Zürich mit dazu!
+    feature_cols = [
+        'pm25_rolling_24h', 
+        'pm25_lag_1h', 
+        'temp_lag_1h', 
+        'hum_lag_1h'
+    ]
+    
+    X = df[feature_cols]  # Die Eingabedaten (Features)
+    y = df['target']      # Die Zielvariable (was vorhergesagt werden soll)
     
     # 3. Features (X) und Target (y) trennen
     # Wir nutzen den aktuellen Wert, den 24h Schnitt und den 1h-Lag

@@ -23,9 +23,19 @@ def compute_features():
     # 4. Feature Engineering (wie im Proposal versprochen!)
     # Berechne den gleitenden Durchschnitt der letzten 24 Stunden
     if 'pm25' in df_pivot.columns:
+        # PM2.5 Trends
         df_pivot['pm25_rolling_24h'] = df_pivot['pm25'].rolling(window=24, min_periods=1).mean()
-        # Lag-Feature: Was war der Wert vor 1 Stunde?
         df_pivot['pm25_lag_1h'] = df_pivot['pm25'].shift(1)
+
+    # Neu: Wetter-Features (Falls vorhanden)
+    if 'temperature' in df_pivot.columns:
+        df_pivot['temp_lag_1h'] = df_pivot['temperature'].shift(1)
+        
+    if 'relativehumidity' in df_pivot.columns:
+        df_pivot['hum_lag_1h'] = df_pivot['relativehumidity'].shift(1)
+
+    # NEU: Zeilen mit NaN-Werten entfernen, die durch das Shifting/Rolling entstanden sind
+    df_pivot = df_pivot.dropna()
 
     # 5. Speichern als "Cleaned Features"
     os.makedirs("data/processed", exist_ok=True)
