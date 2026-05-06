@@ -15,5 +15,7 @@ __pycache__/
 # Wir ignorieren den gesamten Datenordner lokal
 data/
 
+models/*.pkl
+
 # Aber wir wollen, dass die Ordnerstruktur auf GitHub existiert
 # (Dafür nutzt man einen Trick mit .gitkeep, falls nötig)
