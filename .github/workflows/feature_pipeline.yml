@@ -19,7 +19,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install requests pandas pyarrow python-dotenv scikit-learn joblib
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run Pipeline, Features and Train Model
         env:
