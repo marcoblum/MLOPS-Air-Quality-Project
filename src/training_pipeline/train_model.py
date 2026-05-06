@@ -7,104 +7,63 @@ import os
 import hopsworks
 from dotenv import load_dotenv
 
-# 1. Windows-Fix für Zertifikate (wichtig für lokale Tests auf deinem PC)
+# Zertifikats-Fix für Windows (lokal)
 if os.name == 'nt':
-    if not os.path.exists("C:\\tmp"):
-        os.makedirs("C:\\tmp")
     os.environ["HOPSWORKS_CLIENT_CERT_PATH"] = "C:\\tmp"
 
 def train_model():
-    """
-    Lädt Daten von Hopsworks, berechnet Features und trainiert das Modell.
-    """
+    print("--- VERSION 2 START (AUTOMATIC LOGIN) ---")
     load_dotenv()
     
-    # 2. Verbindung zu Hopsworks herstellen
-    # api_key_value stellt sicher, dass GitHub Actions nicht interaktiv nachfragt
+    # LOGIN FIX: Wir erzwingen die Nutzung des API-Keys aus der Umgebung
     project = hopsworks.login(
         api_key_value=os.getenv("HOPSWORKS_API_KEY"),
         project="AeroPredict"
     )
     fs = project.get_feature_store()
     
-    # 3. Daten aus dem Feature Store laden
-    print("Lade historische Daten von Hopsworks...")
+    print("Lade Daten von Hopsworks...")
     air_quality_fg = fs.get_feature_group(name="air_quality_features", version=1)
     df = air_quality_fg.read() 
     
-    # Sortierung sicherstellen
     time_col = 'timestamp' 
     df = df.sort_values(by=time_col)
 
-    # 4. Feature Engineering (Lags berechnen)
-    print("Berechne Features (Lags & Rolling Windows)...")
+    # Einfaches Feature Engineering
     df['pm25_rolling_24h_mean'] = df['value'].rolling(window=24).mean()
     df['pm25_lag_1h'] = df['value'].shift(1)
     df['pm25_lag_24h'] = df['value'].shift(24)
     df['pm25_lag_7d'] = df['value'].shift(24 * 7)
     
-    # Zeitbasierte Features
     df[time_col] = pd.to_datetime(df[time_col])
     df['hour'] = df[time_col].dt.hour
     df['day_of_week'] = df[time_col].dt.dayofweek
     df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-    
-    # Zielwert (Target): Der Durchschnitt der nächsten 24 Stunden
     df['target_24h_mean'] = df['value'].rolling(window=24).mean().shift(-24)
 
-    # 5. Features (X) und Target (y) definieren
-    features = [
-        'pm25_rolling_24h_mean', 
-        'pm25_lag_1h', 
-        'pm25_lag_24h', 
-        'pm25_lag_7d',
-        'hour', 
-        'day_of_week', 
-        'is_weekend'
-    ]
+    features = ['pm25_rolling_24h_mean', 'pm25_lag_1h', 'pm25_lag_24h', 'pm25_lag_7d', 'hour', 'day_of_week', 'is_weekend']
     target = 'target_24h_mean'
     
-    # Entferne Zeilen mit leeren Werten (entstehen durch das Verschieben/Shiften)
     df = df.dropna(subset=features + [target])
 
-    if len(df) < 100:
-        print(f"FEHLER: Zu wenig Daten für ein Training ({len(df)} Zeilen).")
+    if len(df) < 10:
+        print("Zu wenig Daten.")
         return
 
-    X = df[features]
-    y = df[target]
+    X, y = df[features], df[target]
+    tscv = TimeSeriesSplit(n_splits=3) # Kleiner Split zum Testen
 
-    # 6. TimeSeriesSplit & Training
-    tscv = TimeSeriesSplit(n_splits=5)
-    print(f"Starte Training auf {len(df)} Zeitpunkten...")
-
-    # Training im letzten Split-Durchlauf
     for train_index, test_index in tscv.split(X):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=15,
-        min_samples_leaf=5,
-        random_state=42,
-        n_jobs=-1
-    )
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
 
-    # 7. Evaluieren
-    predictions = model.predict(X_test)
-    mae = mean_absolute_error(y_test, predictions)
-    r2 = r2_score(y_test, predictions)
-
-    print(f"\n--- Training Erfolgreich ---")
-    print(f"MAE (Mittlerer Fehler): {mae:.2f} µg/m³")
-    print(f"R² Score: {r2:.2f}")
-
-    # 8. Modell speichern
+    print(f"Training erfolgreich! R2: {r2_score(y_test, model.predict(X_test)):.2f}")
+    
     os.makedirs("models", exist_ok=True)
     joblib.dump(model, "models/air_quality_model.pkl")
-    print("Modell erfolgreich unter 'models/air_quality_model.pkl' gespeichert.")
 
 if __name__ == "__main__":
     train_model()
