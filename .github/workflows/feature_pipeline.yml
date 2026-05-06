@@ -25,6 +25,7 @@ jobs:
       - name: Run Pipeline, Features and Train Model
         env:
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
         run: |
           python src/feature_pipeline/run_feature_pipeline.py
           python src/feature_pipeline/compute_features.py
