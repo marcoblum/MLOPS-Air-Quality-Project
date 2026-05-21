@@ -30,13 +30,11 @@ jobs:
           python src/feature_pipeline/run_feature_pipeline.py
           python src/training_pipeline/train_model.py
 
-      - name: Commit and Push Data and Model
+      - name: Commit and Push Model
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          # Wir fügen die Daten und das Modell hinzu
-          git add -f data/raw/*.parquet
-          git add -f data/processed/*.parquet
+          # Nur noch das trainierte Modell sichern, da die Daten in Hopsworks liegen
           git add -f models/*.pkl
-          git commit -m "auto: update data and model" || echo "No changes to commit"
+          git commit -m "auto: update trained model" || echo "No changes to commit"
           git push
