@@ -9,3 +9,5 @@ hopsworks==4.7.*
 joblib
 python-dotenv
 confluent-kafka
+streamlit
+plotly

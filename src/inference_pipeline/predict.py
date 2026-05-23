@@ -12,8 +12,7 @@ def make_prediction():
     
     model = joblib.load(model_path)
     
-    # 2. Aktuellste Daten aus dem Feature Store laden
-    # Wir brauchen die berechneten Features (Lags & Rolling Mean)
+    # 2. Aktuellste Daten laden
     feature_store_path = "data/processed/features_latest.parquet"
     if not os.path.exists(feature_store_path):
         print("Fehler: Feature Store ist leer. Lass erst compute_features.py laufen.")
@@ -21,28 +20,35 @@ def make_prediction():
     
     df = pd.read_parquet(feature_store_path)
 
-    # Füge das nach dem Laden des Dataframes (df = pd.read_parquet...) ein:
-    print(f"DEBUG: Der absolut neueste Zeitstempel im System: {df.index.max()}")
+    print(f"DEBUG: Der absolut neueste Zeitstempel im System: {df.index.max() if df.index.name else 'Kein Indexname'}")
     print(f"DEBUG: Anzahl der Zeilen insgesamt: {len(df)}")
-    df = df.sort_index()
     
+    # Sortieren nach Zeitstempel
+    if 'timestamp' in df.columns:
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values(by='timestamp')
+        df['hour'] = df['timestamp'].dt.hour
+        df['day_of_week'] = df['timestamp'].dt.dayofweek
+    else:
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_values(by=df.index)
+        df['hour'] = df.index.hour
+        df['day_of_week'] = df.index.dayofweek
+        
     # Den allerletzten verfügbaren Datenpunkt nehmen
     latest_data = df.tail(1)
-    current_time = latest_data.index[0]
+    current_time = latest_data['timestamp'].values[0] if 'timestamp' in latest_data.columns else latest_data.index[0]
     
-    # 3. Features auswählen (Reihenfolge muss EXAKT wie im Training sein)
-    # Wichtig: Wir nutzen die Namen aus deinem Training-Skript!
+    # 3. Features auswählen (EXAKT wie in der neuen train_model.py definiert!)
     feature_cols = [
-        'pm25_rolling_24h_mean', 
-        'pm25_lag_1h', 
-        'temp_lag_1h', 
-        'hum_lag_1h'
+        'pm25_rolling_24h_mean', 'pm25_lag_1h', 'pm25_lag_24h', 
+        'hour', 'day_of_week', 'temperature', 'relativehumidity'
     ]
     
     # Überprüfen, ob alle Features da sind
     missing = [c for c in feature_cols if c not in latest_data.columns]
     if missing:
-        print(f"Fehler: Folgende Features fehlen im Feature Store: {missing}")
+        print(f"Fehler: Folgende Features fehlen im Datensatz: {missing}")
         return
 
     X_latest = latest_data[feature_cols]
@@ -50,16 +56,14 @@ def make_prediction():
     # 4. Vorhersage treffen
     prediction = model.predict(X_latest)[0]
     
-    # 5. Ausgabe verschönern
+    # 5. Ausgabe
     print(f"\n--- Luftqualitäts-Vorhersage für Zürich Kaserne ---")
-    print(f"Letzter Messzeitpunkt (UTC): {current_time}")
+    print(f"Letzter Messzeitpunkt: {current_time}")
     print(f"Aktueller PM2.5 Wert: {latest_data['pm25'].values[0]:.2f} µg/m³")
-    print(f"Aktuelle Temperatur: {latest_data['temperature'].values[0]:.1f} °C")
+    if 'temperature' in latest_data.columns:
+        print(f"Aktuelle Temperatur: {latest_data['temperature'].values[0]:.1f} °C")
     print(f"---")
-    # Da wir auf 'target_24h_mean' trainiert haben, ist das die Vorhersage für den 24h-Schnitt
     print(f"PROGNOSE für PM2.5 (Durchschnitt nächste 24h): {prediction:.2f} µg/m³")
-
-    
 
 if __name__ == "__main__":
     make_prediction()

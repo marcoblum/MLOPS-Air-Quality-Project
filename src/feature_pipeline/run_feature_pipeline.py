@@ -28,9 +28,9 @@ def run_pipeline():
     now = datetime.utcnow()
 
     if len(sys.argv) > 1 and sys.argv[1] == "--backfill":
-        steps = 1
-        step_days = 14
-        print(f"!!! TEST-BACKFILL: Lade nur {step_days} Tage !!!")
+        steps = 36
+        step_days = 20
+        print(f"!!! STARTING STEPPED BACKFILL (Total ca. 720 Tage) !!!")
     else:
         steps = 1
         step_days = 1
