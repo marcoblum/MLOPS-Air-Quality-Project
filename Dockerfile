@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 6. Den gesamten Projektcode in den Container kopieren
 COPY . .
 
-# 7. Den Netzwerk-Port für Streamlit freigeben
-EXPOSE 8501
+# Den Port-Zwang von 8501 entfernen und durch den Hugging Face Standard ersetzen
+EXPOSE 7860
 
-# 8. Startbefehl für Streamlit
-CMD ["python", "-m", "streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Startbefehl: Streamlit liest den Port nun dynamisch aus der Cloud-Umgebung
+CMD ["streamlit", "run", "src/app.py", "--server.port=7860", "--server.address=0.0.0.0"]
