@@ -11,3 +11,4 @@ python-dotenv
 confluent-kafka
 streamlit
 plotly
+xgboost

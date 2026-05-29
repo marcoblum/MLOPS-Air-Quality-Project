@@ -141,7 +141,7 @@ def run_pipeline():
         for label, s_id in SENSOR_IDS.items():
             url = f"https://api.openaq.org/v3/sensors/{s_id}/measurements"
             # Limit hochgeschraubt auf 2000, um sicher alle Stunden der 14 Tage zu fangen!
-            params = {"datetime_from": date_from, "datetime_to": date_to, "limit": 2000}
+            params = {"datetime_from": date_from, "datetime_to": date_to, "limit": 1000}
 
             try:
                 response = requests.get(url, headers=headers, params=params, timeout=15)
