@@ -1,98 +1,123 @@
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+import numpy as np
+from xgboost import XGBRegressor
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import joblib
 import os
-import hopsworks
 from dotenv import load_dotenv
 
-# Zertifikats-Fix für Windows (lokal)
-# Zertifikats-Fix für Windows (lokal) und Linux (GitHub)
 if os.name == 'nt':
     if not os.path.exists("C:\\tmp"): os.makedirs("C:\\tmp")
     os.environ["HOPSWORKS_CLIENT_CERT_PATH"] = "C:\\tmp"
 else:
-    # Für Linux / GitHub Action
     os.environ["HOPSWORKS_CLIENT_CERT_PATH"] = "/tmp"
 
 def train_model():
-    print("--- START TRAINING PIPELINE ---")
+    print("--- START TRAINING PIPELINE (LOCAL TUNING MODE) ---")
     load_dotenv()
     
-    project = hopsworks.login(
-        api_key_value=os.getenv("HOPSWORKS_API_KEY"),
-        project="AeroPredict"
-    )
-    fs = project.get_feature_store()
+    # Pfad zur frisch generierten, 11'000 Zeilen starken Backup-Datei
+    # Falls das Skript im Ordner 'src/training_pipeline' liegt, gehen wir zwei Ordner hoch und in den feature_pipeline-Ordner
+    backup_path = "../feature_pipeline/data/processed/features_latest.parquet"
     
-    print("Lade Daten von Hopsworks...")
-    air_quality_fg = fs.get_feature_group(name="air_quality_features", version=1)
-    
-    # Wir lesen die Daten. Da wir in der Feature Pipeline 'wait=True' nutzen,
-    # wird dieses Skript hier erst funktionieren, wenn der Job fertig ist.
-    try:
-        df = air_quality_fg.read()
-        print(f"{len(df)} Zeilen erfolgreich geladen.")
-    except Exception as e:
-        print(f"Fehler beim Laden: {e}")
+    # Fallback-Pfad, falls du das Skript aus dem Root-Verzeichnis startest
+    if not os.path.exists(backup_path):
+        backup_path = "data/processed/features_latest.parquet"
+
+    if os.path.exists(backup_path):
+        print(f"Lade lokal prozessiertes Gold-Standard-File: {backup_path}")
+        df = pd.read_parquet(backup_path)
+    else:
+        print(f"Fehler: Die Datei '{backup_path}' wurde nicht gefunden. Bitte lasse zuerst die Feature-Pipeline laufen!")
         return
 
-    # WICHTIG: Spaltennamen sortieren und Zeit konvertieren
-    time_col = 'timestamp' 
-    df = df.sort_values(by=time_col)
+    # Spaltennamen zur Sicherheit in Kleinschreibung vereinheitlichen
+    df.columns = [c.lower() for c in df.columns]
+
+    # Zeitstempel sortieren (Dozenten-Feedback umgesetzt)
+    time_col = 'timestamp'
     df[time_col] = pd.to_datetime(df[time_col])
+    df = df.sort_values(by=time_col).reset_index(drop=True)
 
-    # FEATURE ENGINEERING (angepasst an Pivot-Format)
-    # Wir nutzen jetzt 'pm25' statt 'value'
-    df['pm25_rolling_24h_mean'] = df['pm25'].rolling(window=24).mean()
-    df['pm25_lag_1h'] = df['pm25'].shift(1)
-    df['pm25_lag_24h'] = df['pm25'].shift(24)
-    
-    # Zeit-Features
-    df['hour'] = df[time_col].dt.hour
-    df['day_of_week'] = df[time_col].dt.dayofweek
-    
-    # Zielvariable: PM25 Durchschnitt der NÄCHSTEN 24 Stunden (Vorhersage-Target)
-    df['target_24h_mean'] = df['pm25'].rolling(window=24).mean().shift(-24)
-
-    # Wir nehmen Temperatur und Feuchtigkeit als zusätzliche Features mit rein!
-    features = [
-        'pm25_rolling_24h_mean', 'pm25_lag_1h', 'pm25_lag_24h', 
-        'hour', 'day_of_week', 'temperature', 'relativehumidity'
-    ]
+    # Zielvariable (Target liegt nun fix in der Datei, keine Warnung mehr!)
     target = 'target_24h_mean'
     
-    # Zeilen mit NaN (durch rolling/shift) entfernen
+    if target not in df.columns:
+        print(f"Kritischer Fehler: '{target}' fehlt in der Parquet-Datei!")
+        return
+
+    # Features definieren, die wir beim Backfill berechnet haben
+    features = [
+        'pm25_rolling_24h_mean', 'pm25_lag_1h', 'pm25_lag_24h', 
+        'hour', 'day_of_week', 'temperature', 'relativehumidity']
+    
+    # NaN-Werte entfernen
     df = df.dropna(subset=features + [target])
 
-    if len(df) < 50: # Ein bisschen mehr Daten sollten es für RF schon sein
-        print(f"Zu wenig Daten nach Vorbereitung: {len(df)} Zeilen.")
-        return
+    print(f"Daten erfolgreich vorbereitet. Datensatz enthält {len(df)} saubere Zeilen für das Training.")
 
     X = df[features]
     y = df[target]
 
-    # TimeSeriesSplit für ehrliche Validierung
-    tscv = TimeSeriesSplit(n_splits=3)
-
-    for train_index, test_index in tscv.split(X):
+    # --- TIMERIES-SPLIT CROSS VALIDATION ---
+    tscv = TimeSeriesSplit(n_splits=5)  # 5 Splits über die 11'000 Zeilen
+    
+    maes, rmses, r2s = [], [], []
+    
+    print(f"Starte TimeSeriesSplit Cross-Validation mit XGBoost...")
+    
+    for fold, (train_index, test_index) in enumerate(tscv.split(X)):
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+        
+        # XGBoost Regressor mit optimalen Standard-Hyperparametern für Zeitreihen
+        model = XGBRegressor(
+            n_estimators=200, 
+            learning_rate=0.03, 
+            max_depth=6, 
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42, 
+            n_jobs=-1
+        )
+        model.fit(X_train, y_train)
+        
+        y_pred = model.predict(X_test)
+        
+        # Metriken für dieses Fold berechnen
+        mae = mean_absolute_error(y_test, y_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+        r2 = r2_score(y_test, y_pred)
+        
+        maes.append(mae)
+        rmses.append(rmse)
+        r2s.append(r2)
+        
+        print(f"Fold {fold+1} -> R2: {r2:.2f} | RMSE: {rmse:.2f} | MAE: {mae:.2f}")
 
-    print(f"Starte Training auf {len(X_train)} Zeilen...")
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-
-    # Metriken berechnen
-    y_pred = model.predict(X_test)
-    print(f"Training erfolgreich! R2-Score: {r2_score(y_test, y_pred):.2f}")
-    print(f"MAE: {mean_absolute_error(y_test, y_pred):.2f}")
+    print("\n--- FINALE EVALUATION (DURCHSCHNITT ÜBER GANZES BACKFILL) ---")
+    print(f"Mean R2-Score : {np.mean(r2s):.2f}")
+    print(f"Mean RMSE      : {np.mean(rmses):.2f} µg/m³ (Geforderte Metrik!)")
+    print(f"Mean MAE       : {np.mean(maes):.2f} µg/m³")
     
-    # Modell lokal speichern
+    # Trainiere das finale Modell auf ALLEN 11'000 Zeilen für die Produktion (Hugging Face)
+    print("\nTrainiere finales XGBoost-Modell auf kompletten historischen Daten...")
+    final_model = XGBRegressor(
+        n_estimators=200, 
+        learning_rate=0.03, 
+        max_depth=6, 
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42, 
+        n_jobs=-1
+    )
+    final_model.fit(X, y)
+    
+    # Modell abspeichern
     os.makedirs("models", exist_ok=True)
-    joblib.dump(model, "models/air_quality_model.pkl")
-    print("Modell unter models/air_quality_model.pkl gespeichert.")
+    joblib.dump(final_model, "models/air_quality_model.pkl")
+    print("Modell erfolgreich unter models/air_quality_model.pkl überschrieben.")
 
 if __name__ == "__main__":
     train_model()
