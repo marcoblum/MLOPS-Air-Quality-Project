@@ -21,16 +21,17 @@ def train_model():
     
     df = None
     
-    # 1. HAUPTWEG: Lade den KOMPLETTEN 2-Jahres-Backfill live aus Hopsworks
+    # 1. HAUPTWEG: Lade den KOMPLETTEN 2-Jahres-Backfill live aus dem Offline-Store
     try:
         print("Verbinde mit Hopsworks und lade gesamten historischen Datensatz...")
         project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"), project="AeroPredict")
         fs = project.get_feature_store()
         air_quality_fg = fs.get_feature_group(name="air_quality_features", version=1)
         
-        # .read() holt ALLE Zeilen, die jemals hochgeladen wurden (deine 9.500+ Zeilen!)
-        df = air_quality_fg.read()
-        print(f"✅ ERFOLG: {len(df)} Zeilen live aus dem Hopsworks Feature Store geladen!")
+        # FIX: Wir zwingen Hopsworks, direkt aus der Hive/Hudi-Infrastruktur zu lesen.
+        # Das umgeht den stündlichen Lese-Cache und holt alle 9.500+ Zeilen!
+        df = air_quality_fg.read(read_options={"use_api": False, "read_from_hive": True})
+        print(f"✅ ERFOLG: {len(df)} Zeilen live aus dem Hopsworks Offline-Store geladen!")
     except Exception as e:
         print(f"⚠️ Hopsworks-Live-Abruf aktuell blockiert oder fehlgeschlagen ({e}).")
         print("-> Schalte um auf automatischen MLOps-Fallback auf lokales Parquet-File...")
