@@ -22,19 +22,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Pipeline and Train Model
+      - name: Run Feature Pipeline
         env:
           OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python src/feature_pipeline/run_feature_pipeline.py
-          python src/training_pipeline/train_model.py
-
-      - name: Commit and Push Model
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          # Nur noch das trainierte Modell sichern, da die Daten in Hopsworks liegen
-          git add -f models/*.pkl
-          git commit -m "auto: update trained model" || echo "No changes to commit"
-          git push
