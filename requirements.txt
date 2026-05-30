@@ -12,3 +12,4 @@ confluent-kafka
 streamlit
 plotly
 xgboost
+huggingface_hub
