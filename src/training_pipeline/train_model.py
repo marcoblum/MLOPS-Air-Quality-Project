@@ -27,8 +27,7 @@ def train_model():
         project = hopsworks.login(api_key_value=os.getenv("HOPSWORKS_API_KEY"), project="AeroPredict")
         fs = project.get_feature_store()
         
-        # FIX: Nutzt direkt den SQL-Service des Feature Stores.
-        # Das ignoriert alle automatischen Zwischenspeicher-Filter und holt die gesamte Historie!
+        # Hinweis: Das fängt ab Client v4.0 den blockierten Hive-Abruf ab
         query_str = "SELECT * FROM air_quality_features_1"
         df = fs.sql(query_str)
         print(f"✅ ERFOLG: {len(df)} Zeilen via SQL live aus Hopsworks geladen!")
@@ -63,7 +62,7 @@ def train_model():
         print(f"Kritischer Fehler: '{target}' fehlt im Datensatz!")
         return
 
-    # Features definieren, die wir beim Backfill berechnet haben
+    # Features definieren (Zurück auf die stabilen Standard-Features)
     features = [
         'pm25_rolling_24h_mean', 'pm25_lag_1h', 'pm25_lag_24h', 
         'hour', 'day_of_week', 'temperature', 'relativehumidity'
@@ -85,12 +84,13 @@ def train_model():
         X_train, X_test = X.iloc[train_index], X.iloc[test_index]
         y_train, y_test = y.iloc[train_index], y.iloc[test_index]
         
+        # Zurückgesetzt auf deine perfekt funktionierenden Baseline-Parameter
         model = XGBRegressor(
-            n_estimators=200, 
-            learning_rate=0.03, 
-            max_depth=6, 
-            subsample=0.8,
-            colsample_bytree=0.8,
+            n_estimators=500, 
+            learning_rate=0.01, 
+            max_depth=5, 
+            subsample=0.9,
+            colsample_bytree=0.9,
             random_state=42, 
             n_jobs=-1
         )
@@ -115,11 +115,11 @@ def train_model():
     # Trainiere das finale Modell auf ALLEN Zeilen für die Produktion (Hugging Face)
     print("\nTrainiere finales Champion-Modell auf kompletten historischen Daten...")
     final_model = XGBRegressor(
-        n_estimators=200, 
-        learning_rate=0.03, 
-        max_depth=6, 
-        subsample=0.8,
-        colsample_bytree=0.8,
+        n_estimators=500, 
+        learning_rate=0.01, 
+        max_depth=5, 
+        subsample=0.9,
+        colsample_bytree=0.9,
         random_state=42, 
         n_jobs=-1
     )
