@@ -33,7 +33,6 @@ def fetch_weather_data(start_date, end_date):
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     
-    # Wir nutzen den Forecast-Endpunkt, der über past_days auch historischen Zugriff erlaubt
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -59,8 +58,8 @@ def fetch_weather_data(start_date, end_date):
     return None
 
 
-def transform_batch(raw_data):
-    """Transformiert rohe API-Daten in ein erweitertes Feature-DataFrame (inkl. Wind & Proposal)."""
+def transform_batch(raw_data, is_live_mode=True):
+    """Transformiert rohe API-Daten in ein erweitertes Feature-DataFrame."""
     if not raw_data:
         return None
 
@@ -74,13 +73,13 @@ def transform_batch(raw_data):
     if 'pm25' in df.columns:
         df['pm25'] = df['pm25'].ffill(limit=3).bfill(limit=3)
 
-    # --- ADVANCED FEATURE ENGINEERING (Volle Proposal- & Wind-Compliance) ---
+    # --- ADVANCED FEATURE ENGINEERING ---
     if 'pm25' in df.columns:
         df['pm25_rolling_24h_mean'] = df['pm25'].rolling(window=24, min_periods=1).mean()
-        df['pm25_rolling_24h_var'] = df['pm25'].rolling(window=24, min_periods=1).var()  # REKORD-METRIK
-        df['pm25_lag_1h'] = df['pm25'].shift(1)
-        df['pm25_lag_6h'] = df['pm25'].shift(6)                                          # REKORD-METRIK
-        df['pm25_lag_24h'] = df['pm25'].shift(24)
+        df['pm25_rolling_24h_var'] = df['pm25'].rolling(window=24, min_periods=1).var().fillna(0)
+        df['pm25_lag_1h'] = df['pm25'].shift(1).bfill()
+        df['pm25_lag_6h'] = df['pm25'].shift(6).bfill()
+        df['pm25_lag_24h'] = df['pm25'].shift(24).bfill()
         df['target_24h_mean'] = df['pm25'].shift(-24).rolling(window=24, min_periods=1).mean()
 
     if 'temperature' in df.columns:
@@ -106,11 +105,16 @@ def transform_batch(raw_data):
             df = pd.merge(df, weather_df, on='timestamp_match', how='left')
             df = df.drop(columns=['timestamp_match'])
             
-            # Komplettierung der Interaktionsterme für das Champion-Modell
-            df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'] + 1.0)
-            df['temp_humidity_interaction'] = df['temperature'] * df['relativehumidity']
+            # Wind-Features & Interaktionen
+            df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'].fillna(0) + 1.0)
+            df['temp_humidity_interaction'] = df['temperature'].fillna(0) * df['relativehumidity'].fillna(0)
 
-    cols_to_check = ['pm25', 'pm25_rolling_24h_mean', 'target_24h_mean']
+    # FIX: Im stündlichen Live-Modus schmeißen wir Zeilen ohne Target (die aktuellsten 24h) NICHT mehr weg!
+    if is_live_mode:
+        cols_to_check = ['pm25', 'pm25_rolling_24h_mean']
+    else:
+        cols_to_check = ['pm25', 'pm25_rolling_24h_mean', 'target_24h_mean']
+        
     df = df.dropna(subset=[c for c in cols_to_check if c in df.columns])
 
     return df if len(df) > 0 else None
@@ -138,54 +142,59 @@ def run_pipeline():
     headers = {"X-API-Key": API_KEY}
     now = datetime.utcnow()
 
-    is_backfill = len(sys.argv) > 1 and sys.argv[1] == "--backfill"
+    # Auslesen der Kommandozeilen-Argumente
+    is_backfill_hopsworks = len(sys.argv) > 1 and sys.argv[1] == "--backfill"
+    is_backfill_local = len(sys.argv) > 1 and sys.argv[1] == "--backfill-local"
+    is_any_backfill = is_backfill_hopsworks or is_backfill_local
 
-    if is_backfill:
+    if is_any_backfill:
         steps = 36
         step_days = 20
-        print(f"!!! STARTING STEPPED BACKFILL WITH WEATHER & PROPOSAL METRICS (Total ca. 720 Tage) !!!")
+        if is_backfill_local:
+            print(f"!!! STARTING LOCAL STEPPED BACKFILL (Speichert direkt ins Backup-Verzeichnis) !!!")
+        else:
+            print(f"!!! STARTING HOPSWORKS STEPPED BACKFILL (Total ca. 720 Tage) !!!")
     else:
         steps = 1
         step_days = 14  
         print(f"Hole Daten der letzten {step_days} Tage für stündliche Feature-Berechnung (inkl. Wind)...")
 
-    # --- HOPSWORKS VERBINDUNG ---
-    print(f"Verbinde mit Hopsworks...")
-    try:
-        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
-        fs = project.get_feature_store()
-        
-        # Nutzen der korrekten, existierenden Feature Group
-        air_quality_fg = fs.get_or_create_feature_group(
-            name="air_quality_features_1",
-            version=1,
-            primary_key=["timestamp"],
-            description="Air Quality data with wind features, computed interactions and full proposal compliance",
-            online_enabled=False,
-            event_time="timestamp"
-        )
-        print("Hopsworks Verbindung OK ✅\n")
-        hopsworks_available = True
-    except Exception as e:
-        print(f"⚠️  Hopsworks nicht erreichbar: {e}")
-        print("Fahre fort – Daten werden lokal und für Hugging Face aufbereitet.\n")
-        hopsworks_available = False
-        air_quality_fg = None
+    # --- HOPSWORKS VERBINDUNG (Wird bei lokalem Backfill übersprungen) ---
+    hopsworks_available = False
+    air_quality_fg = None
+    
+    if not is_backfill_local:
+        print(f"Verbinde mit Hopsworks...")
+        try:
+            project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
+            fs = project.get_feature_store()
+            air_quality_fg = fs.get_or_create_feature_group(
+                name="air_quality_features_1",
+                version=1,
+                primary_key=["timestamp"],
+                description="Air Quality data with wind features and computed interactions",
+                online_enabled=False,
+                event_time="timestamp"
+            )
+            print("Hopsworks Verbindung OK ✅\n")
+            hopsworks_available = True
+        except Exception as e:
+            print(f"⚠️  Hopsworks nicht erreichbar: {e}")
+            print("Fahre fort – Daten werden lokal und für Hugging Face aufbereitet.\n")
 
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs("data/processed/history", exist_ok=True)
     all_batches = []
     successful_uploads = 0
     failed_uploads = 0
 
     # --- HAUPT-LOOP ---
     for i in range(steps):
-        if not is_backfill:
+        if not is_any_backfill:
             date_to   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             date_from = (now - timedelta(days=step_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         else:
             date_to   = (now - timedelta(days=i * step_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
             date_from = (now - timedelta(days=(i + 1) * step_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            
             print(f"\n[Schritt {i+1}/{steps}] Lade Zeitraum: {date_from} bis {date_to}")
 
         batch_data = []
@@ -203,65 +212,64 @@ def run_pipeline():
                         if ts:
                             batch_data.append({"timestamp": ts, "parameter": label, "value": entry['value']})
                     print(f"  -> {label}: {len(results)} Datensätze")
-                else:
-                    print(f"  -> Fehler {label}: HTTP {response.status_code}")
-            except requests.exceptions.Timeout:
-                print(f"  -> Timeout bei {label} – übersprungen")
             except Exception as e:
                 print(f"  -> API Fehler bei {label}: {e}")
 
-        df_batch = transform_batch(batch_data)
+        # Live-Modus Flag setzen (bestimmt dropna-Verhalten)
+        df_batch = transform_batch(batch_data, is_live_mode=(not is_any_backfill))
 
         if df_batch is None or len(df_batch) == 0:
             print(f"  -> Keine verwertbaren Daten in diesem Batch, übersprungen.")
             continue
 
-        print(f"  -> {len(df_batch)} Zeilen nach Feature Engineering (inkl. Wind/Proposal)")
+        print(f"  -> {len(df_batch)} Zeilen nach Feature Engineering")
 
-        if is_backfill and hopsworks_available:
+        if is_backfill_hopsworks and hopsworks_available:
             batch_label = f"[{date_from[:10]} – {date_to[:10]}]"
             success = upload_to_hopsworks(df_batch, air_quality_fg, batch_label)
-            if success:
-                successful_uploads += 1
-            else:
-                failed_uploads += 1
-                fallback_path = f"data/processed/backfill_batch_{i+1}.parquet"
-                df_batch.to_parquet(fallback_path)
+            if success: successful_uploads += 1
+            else: failed_uploads += 1
             time.sleep(0.3)
         else:
+            # Sammelt alle Batches (entweder für den Live-Upload oder das lokale Backfill-File)
             all_batches.append(df_batch)
 
-    # --- FINALE SYNCHRONISATION (Stündlicher Lauf) ---
-    if not is_backfill and all_batches:
+    # --- FINALE COORD-STEUERUNG ---
+    if all_batches:
         df_final = pd.concat(all_batches).drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
 
-        # 1. Lokal im GitHub-Runner speichern (Dein Gold-Standard-File!)
-        local_parquet_path = "data/processed/features_latest.parquet"
-        df_final.to_parquet(local_parquet_path)
-        print(f"\n✅ Daten lokal im Runner gesichert: {local_parquet_path} ({len(df_final)} Zeilen)")
+        if is_backfill_local:
+            # --- PFAD B: LOKALES RE-BACKFILL SPEICHERN ---
+            local_history_path = "data/processed/history/features_latest_backfill.parquet"
+            df_final.to_parquet(local_history_path)
+            print(f"\n✅ ECHTES 2-JAHRES GOLD-FILE RE-GENERIERT (inkl. aller Wind-Features!):")
+            print(f" -> Pfad: {local_history_path}")
+            print(f" -> Zeilenanzahl: {len(df_final)}")
+        
+        elif not is_backfill_hopsworks:
+            # --- PFAD A: STÜNDLICHER LIVE-RUN (GitHub Action) ---
+            local_parquet_path = "data/processed/features_latest.parquet"
+            df_final.to_parquet(local_parquet_path)
+            print(f"\n✅ Live-Daten lokal gesichert: {local_parquet_path} ({len(df_final)} Zeilen)")
 
-        # 2. Upload zu Hopsworks
-        if hopsworks_available:
-            upload_to_hopsworks(df_final, air_quality_fg, "[stündlicher Lauf]")
+            if hopsworks_available:
+                upload_to_hopsworks(df_final, air_quality_fg, "[stündlicher Lauf]")
 
-        # 3. DIREKT-SYNCHRONISATION MIT HUGGING FACE
-        try:
-            print("Pushe aktuellen Parquet-Cache direkt zu Hugging Face Spaces...")
-            from huggingface_hub import HfApi
-            api = HfApi()
-            api.upload_file(
-                path_or_fileobj=local_parquet_path,
-                path_in_repo="data/processed/features_latest.parquet",
-                repo_id="Balumi13/Air-Quality",
-                repo_type="space"
-            )
-            print("✅ Direkt-Upload zu Hugging Face erfolgreich! Dashboard hat frische Daten.")
-        except Exception as hf_err:
-            print(f"⚠️ Hugging Face Direkt-Upload fehlgeschlagen: {hf_err}")
+            try:
+                print("Pushe aktuellen Parquet-Cache direkt zu Hugging Face Spaces...")
+                from huggingface_hub import HfApi
+                api = HfApi()
+                api.upload_file(
+                    path_or_fileobj=local_parquet_path,
+                    path_in_repo="data/processed/features_latest.parquet",
+                    repo_id="Balumi13/Air-Quality",
+                    repo_type="space"
+                )
+                print("✅ Direkt-Upload zu Hugging Face erfolgreich!")
+            except Exception as hf_err:
+                print(f"⚠️ Hugging Face Direkt-Upload fehlgeschlagen: {hf_err}")
 
     print("\n--- Pipeline abgeschlossen ---")
-    if is_backfill:
-        print(f"Backfill Ergebnis: {successful_uploads} Batches erfolgreich, {failed_uploads} fehlgeschlagen")
 
 if __name__ == "__main__":
     run_pipeline()
