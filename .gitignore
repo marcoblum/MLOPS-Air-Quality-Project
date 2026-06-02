@@ -19,3 +19,5 @@ models/*.pkl
 
 # Aber wir wollen, dass die Ordnerstruktur auf GitHub existiert
 # (Dafür nutzt man einen Trick mit .gitkeep, falls nötig)
+
+zlocal_vault/

@@ -1,7 +1,7 @@
+import os
 import requests
 import pandas as pd
 import numpy as np
-import os
 import sys
 import hopsworks
 from dotenv import load_dotenv
@@ -29,7 +29,7 @@ def get_timestamp(entry):
 
 def fetch_weather_data(start_date, end_date):
     """Holt stündliche Wind- und Wetterdaten von Open-Meteo passend zum Batch-Zeitraum."""
-    lat, lon = 47.3769, 8.5417  # Region Zentralschweiz / Zürich
+    lat, lon = 47.3769, 8.5417  # Region Zürich
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
     
@@ -115,7 +115,7 @@ def transform_batch(raw_data, is_live_mode=True):
             df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'].fillna(0) + 1.0)
             df['temp_humidity_interaction'] = df['temperature'].fillna(0) * df['relativehumidity'].fillna(0)
 
-    # FIX: Im stündlichen Live-Modus schmeißen wir Zeilen ohne Target (die aktuellsten 24h) NICHT mehr weg!
+    # Im stündlichen Live-Modus schmeißen wir Zeilen ohne Target (die aktuellsten 24h) NICHT weg!
     if is_live_mode:
         cols_to_check = ['pm25', 'pm25_rolling_24h_mean']
     else:
@@ -133,7 +133,7 @@ def upload_to_hopsworks(df, air_quality_fg, batch_label=""):
         air_quality_fg.insert(
             df,
             write_options={
-                "wait_for_job": True,  # Wartet, bis Iceberg fertig committet ist
+                "wait_for_job": True,
                 "use_spark": False
             }
         )
@@ -148,52 +148,42 @@ def run_pipeline():
     headers = {"X-API-Key": API_KEY}
     now = datetime.utcnow()
 
-    # Auslesen der Kommandozeilen-Argumente
-    is_backfill_hopsworks = len(sys.argv) > 1 and sys.argv[1] == "--backfill"
-    is_backfill_local = len(sys.argv) > 1 and sys.argv[1] == "--backfill-local"
-    is_any_backfill = is_backfill_hopsworks or is_backfill_local
+    # Nur noch das Hopsworks-Backfill Flag bleibt aktiv für die Reproduzierbarkeit
+    is_backfill = len(sys.argv) > 1 and sys.argv[1] == "--backfill"
 
-    if is_any_backfill:
+    if is_backfill:
         steps = 36
         step_days = 20
-        if is_backfill_local:
-            print(f"!!! STARTING LOCAL STEPPED BACKFILL (Speichert direkt ins Backup-Verzeichnis) !!!")
-        else:
-            print(f"!!! STARTING HOPSWORKS STEPPED BACKFILL (Total ca. 720 Tage) !!!")
+        print(f"!!! STARTING HOPSWORKS STEPPED BACKFILL (Total ca. 720 Tage) !!!")
     else:
         steps = 1
         step_days = 14  
         print(f"Hole Daten der letzten {step_days} Tage für stündliche Feature-Berechnung (inkl. Wind)...")
 
-    # --- HOPSWORKS VERBINDUNG (Wird bei lokalem Backfill übersprungen) ---
-    hopsworks_available = False
-    air_quality_fg = None
-    
-    if not is_backfill_local:
-        print(f"Verbinde mit Hopsworks...")
-        try:
-            project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
-            fs = project.get_feature_store()
-            air_quality_fg = fs.get_or_create_feature_group(
-                name="air_quality_features_1",
-                version=1,
-                primary_key=["timestamp"],
-                description="Air Quality data with wind features and computed interactions",
-                online_enabled=False,
-                event_time="timestamp"
-            )
-            print("Hopsworks Verbindung OK ✅\n")
-            hopsworks_available = True
-        except Exception as e:
-            print(f"⚠️  Hopsworks nicht erreichbar: {e}")
-            print("Fahre fort – Daten werden lokal und für Hugging Face aufbereitet.\n")
+    # --- HOPSWORKS VERBINDUNG ---
+    print(f"Verbinde mit Hopsworks...")
+    try:
+        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
+        fs = project.get_feature_store()
+        air_quality_fg = fs.get_or_create_feature_group(
+            name="air_quality_features_1",
+            version=1,
+            primary_key=["timestamp"],
+            description="Air Quality data with wind features and computed interactions",
+            online_enabled=False,
+            event_time="timestamp"
+        )
+        print("Hopsworks Verbindung OK ✅\n")
+    except Exception as e:
+        print(f"❌ Kritischer Fehler: Verbindung zu Hopsworks fehlgeschlagen: {e}")
+        return
 
-    os.makedirs("data/processed/history", exist_ok=True)
+    os.makedirs("data/processed", exist_ok=True)
     all_batches = []
 
     # --- HAUPT-LOOP ---
     for i in range(steps):
-        if not is_any_backfill:
+        if not is_backfill:
             date_to   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
             date_from = (now - timedelta(days=step_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         else:
@@ -207,10 +197,9 @@ def run_pipeline():
             url = f"https://api.openaq.org/v3/sensors/{s_id}/measurements"
             params = {"datetime_from": date_from, "datetime_to": date_to, "limit": 1000}
 
-            # RETRY CONFIGURATION FÜR SENSORDATEN-ABRUF
             success = False
             retries = 3
-            backoff = 2.0  # Sekunden
+            backoff = 2.0
 
             for attempt in range(retries):
                 try:
@@ -240,38 +229,26 @@ def run_pipeline():
                 print(f"  -> ❌ Schritt final fehlgeschlagen für Sensor {label} nach {retries} Versuchen.")
 
         # Live-Modus Flag setzen (bestimmt dropna-Verhalten)
-        df_batch = transform_batch(batch_data, is_live_mode=(not is_any_backfill))
+        df_batch = transform_batch(batch_data, is_live_mode=(not is_backfill))
 
         if df_batch is None or len(df_batch) == 0:
             print(f"  -> Keine verwertbaren Daten in diesem Batch, übersprungen.")
             continue
 
         print(f"  -> {len(df_batch)} Zeilen nach Feature Engineering")
-        
         all_batches.append(df_batch)
-        time.sleep(0.5)  # Etwas erhöht, um die OpenAQ API konstant zu entlasten
+        time.sleep(0.5)
 
-    # --- FINALE COORD-STEUERUNG (Nachdem alle Steps durchgelaufen sind) ---
+    # --- FINALE VERARBEITUNG ---
     if all_batches:
         print("\n📊 Aggregiere und bereinige alle gesammelten Batches...")
         df_final = pd.concat(all_batches).drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         print(f" -> Bereinigter Datensatz enthält {len(df_final)} eindeutige Zeilen.")
 
-        if is_backfill_local:
-            # --- PFAD B: LOKALES RE-BACKFILL SPEICHERN ---
-            local_history_path = "data/processed/history/features_latest_backfill.parquet"
-            df_final.to_parquet(local_history_path)
-            print(f"\n✅ ECHTES 2-JAHRES GOLD-FILE RE-GENERIERT (inkl. aller Wind-Features!):")
-            print(f" -> Pfad: {local_history_path}")
-            print(f" -> Zeilenanzahl: {len(df_final)}")
-        
-        elif is_backfill_hopsworks:
-            # --- NEUER PFAD C: EINMALIGER HOPSWORKS BACKFILL UPLOAD ALS EIN GANZEs PAKET ---
-            if hopsworks_available:
-                print(f"\n📤 Starte finalen Gesamt-Upload des 2-Jahres-Backfills an Hopsworks...")
-                upload_to_hopsworks(df_final, air_quality_fg, "[Kompletter Backfill]")
-            else:
-                print("❌ Hopsworks Backfill fehlgeschlagen: Keine aktive Verbindung vorhanden.")
+        if is_backfill:
+            # --- PFAD B: HOPSWORKS BACKFILL UPLOAD ---
+            print(f"\n📤 Starte finalen Gesamt-Upload des 2-Jahres-Backfills an Hopsworks...")
+            upload_to_hopsworks(df_final, air_quality_fg, "[Kompletter Backfill]")
         
         else:
             # --- PFAD A: STÜNDLICHER LIVE-RUN (GitHub Action) ---
@@ -279,8 +256,7 @@ def run_pipeline():
             df_final.to_parquet(local_parquet_path)
             print(f"\n✅ Live-Daten lokal gesichert: {local_parquet_path} ({len(df_final)} Zeilen)")
 
-            if hopsworks_available:
-                upload_to_hopsworks(df_final, air_quality_fg, "[stündlicher Lauf]")
+            upload_to_hopsworks(df_final, air_quality_fg, "[stündlicher Lauf]")
 
             try:
                 print("Pushe aktuellen Parquet-Cache direkt zu Hugging Face Spaces...")
