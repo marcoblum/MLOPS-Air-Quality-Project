@@ -31,10 +31,9 @@ jobs:
         run: |
           python src/feature_pipeline/run_feature_pipeline.py
 
-      # --- JETZT MIT AKTIVEM HF_TOKEN UPLOAD ---
       - name: Run Training Pipeline
         env:
           HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}  # Hier wurde die Auskommentierung entfernt!
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python src/training_pipeline/train_model.py
