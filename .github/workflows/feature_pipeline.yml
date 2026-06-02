@@ -1,4 +1,4 @@
-name: Hourly Feature Pipeline
+name: Hourly Feature & Training Pipeline
 
 on:
   schedule:
@@ -10,12 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Aktualisiert auf v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # Aktualisiert auf v5
         with:
           python-version: '3.10'
+          cache: 'pip'  # Aktiviert automatisches Caching für deine Libraries (spart Zeit & Ressourcen)
 
       - name: Install Dependencies
         run: |
@@ -29,3 +30,13 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python src/feature_pipeline/run_feature_pipeline.py
+
+      # --- NEUER SCHRITT: STÜNDLICHES FULL RETRAIN ---
+      - name: Run Training Pipeline
+        env:
+          HOPSWORKS_API_KEY: ${{ secrets.HOPSWORKS_API_KEY }}
+          # Falls dein train_model.py später auch HF_TOKEN braucht (z.B. für Model Uploads), 
+          # kannst du es hier einfach einkommentieren:
+          # HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python src/training_pipeline/train_model.py

@@ -105,6 +105,12 @@ def transform_batch(raw_data, is_live_mode=True):
             df = pd.merge(df, weather_df, on='timestamp_match', how='left')
             df = df.drop(columns=['timestamp_match'])
             
+            # --- DATENTYP-FIX FÜR HOPSWORKS COMPLIANCE ---
+            if 'wind_direction' in df.columns:
+                df['wind_direction'] = df['wind_direction'].astype('float64')
+            if 'wind_speed' in df.columns:
+                df['wind_speed'] = df['wind_speed'].astype('float64')
+            
             # Wind-Features & Interaktionen
             df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'].fillna(0) + 1.0)
             df['temp_humidity_interaction'] = df['temperature'].fillna(0) * df['relativehumidity'].fillna(0)
@@ -127,7 +133,7 @@ def upload_to_hopsworks(df, air_quality_fg, batch_label=""):
         air_quality_fg.insert(
             df,
             write_options={
-                "wait_for_job": False,
+                "wait_for_job": True,  # Wartet, bis Iceberg fertig committet ist
                 "use_spark": False
             }
         )
@@ -184,8 +190,6 @@ def run_pipeline():
 
     os.makedirs("data/processed/history", exist_ok=True)
     all_batches = []
-    successful_uploads = 0
-    failed_uploads = 0
 
     # --- HAUPT-LOOP ---
     for i in range(steps):
@@ -203,17 +207,37 @@ def run_pipeline():
             url = f"https://api.openaq.org/v3/sensors/{s_id}/measurements"
             params = {"datetime_from": date_from, "datetime_to": date_to, "limit": 1000}
 
-            try:
-                response = requests.get(url, headers=headers, params=params, timeout=15)
-                if response.status_code == 200:
-                    results = response.json().get('results', [])
-                    for entry in results:
-                        ts = get_timestamp(entry)
-                        if ts:
-                            batch_data.append({"timestamp": ts, "parameter": label, "value": entry['value']})
-                    print(f"  -> {label}: {len(results)} Datensätze")
-            except Exception as e:
-                print(f"  -> API Fehler bei {label}: {e}")
+            # RETRY CONFIGURATION FÜR SENSORDATEN-ABRUF
+            success = False
+            retries = 3
+            backoff = 2.0  # Sekunden
+
+            for attempt in range(retries):
+                try:
+                    response = requests.get(url, headers=headers, params=params, timeout=15)
+                    if response.status_code == 200:
+                        results = response.json().get('results', [])
+                        for entry in results:
+                            ts = get_timestamp(entry)
+                            if ts:
+                                batch_data.append({"timestamp": ts, "parameter": label, "value": entry['value']})
+                        print(f"  -> {label}: {len(results)} Datensätze geladen.")
+                        success = True
+                        break
+                    elif response.status_code == 429:
+                        print(f"  -> ⚠️ Rate Limit (429) bei {label}. Warte {backoff}s... (Versuch {attempt+1}/{retries})")
+                        time.sleep(backoff)
+                        backoff *= 2
+                    else:
+                        print(f"  -> ⚠️ HTTP {response.status_code} bei {label}. Versuche erneut in 2s...")
+                        time.sleep(2)
+                except Exception as e:
+                    print(f"  -> ⚠️ Netzwerk-/API-Fehler bei {label}: {e}. Versuche erneut in {backoff}s...")
+                    time.sleep(backoff)
+                    backoff *= 2
+
+            if not success:
+                print(f"  -> ❌ Schritt final fehlgeschlagen für Sensor {label} nach {retries} Versuchen.")
 
         # Live-Modus Flag setzen (bestimmt dropna-Verhalten)
         df_batch = transform_batch(batch_data, is_live_mode=(not is_any_backfill))
@@ -223,20 +247,15 @@ def run_pipeline():
             continue
 
         print(f"  -> {len(df_batch)} Zeilen nach Feature Engineering")
+        
+        all_batches.append(df_batch)
+        time.sleep(0.5)  # Etwas erhöht, um die OpenAQ API konstant zu entlasten
 
-        if is_backfill_hopsworks and hopsworks_available:
-            batch_label = f"[{date_from[:10]} – {date_to[:10]}]"
-            success = upload_to_hopsworks(df_batch, air_quality_fg, batch_label)
-            if success: successful_uploads += 1
-            else: failed_uploads += 1
-            time.sleep(0.3)
-        else:
-            # Sammelt alle Batches (entweder für den Live-Upload oder das lokale Backfill-File)
-            all_batches.append(df_batch)
-
-    # --- FINALE COORD-STEUERUNG ---
+    # --- FINALE COORD-STEUERUNG (Nachdem alle Steps durchgelaufen sind) ---
     if all_batches:
-        df_final = pd.concat(all_batches).drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        print("\n📊 Aggregiere und bereinige alle gesammelten Batches...")
+        df_final = pd.concat(all_batches).drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+        print(f" -> Bereinigter Datensatz enthält {len(df_final)} eindeutige Zeilen.")
 
         if is_backfill_local:
             # --- PFAD B: LOKALES RE-BACKFILL SPEICHERN ---
@@ -246,7 +265,15 @@ def run_pipeline():
             print(f" -> Pfad: {local_history_path}")
             print(f" -> Zeilenanzahl: {len(df_final)}")
         
-        elif not is_backfill_hopsworks:
+        elif is_backfill_hopsworks:
+            # --- NEUER PFAD C: EINMALIGER HOPSWORKS BACKFILL UPLOAD ALS EIN GANZEs PAKET ---
+            if hopsworks_available:
+                print(f"\n📤 Starte finalen Gesamt-Upload des 2-Jahres-Backfills an Hopsworks...")
+                upload_to_hopsworks(df_final, air_quality_fg, "[Kompletter Backfill]")
+            else:
+                print("❌ Hopsworks Backfill fehlgeschlagen: Keine aktive Verbindung vorhanden.")
+        
+        else:
             # --- PFAD A: STÜNDLICHER LIVE-RUN (GitHub Action) ---
             local_parquet_path = "data/processed/features_latest.parquet"
             df_final.to_parquet(local_parquet_path)
