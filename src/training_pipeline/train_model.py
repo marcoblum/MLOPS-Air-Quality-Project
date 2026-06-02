@@ -19,6 +19,7 @@ def train_model():
     print("--- START TRAINING PIPELINE (HOPSWORKS LIVE RETRAIN MODE) ---")
     load_dotenv()
     HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY")
+    HF_TOKEN = os.getenv("HF_TOKEN")
     
     # 1. DATEN DIREKT AUS HOPSWORKS LADEN
     print("🔄 Verbinde mit Hopsworks Feature Store...")
@@ -135,6 +136,25 @@ def train_model():
     model_output_path = os.path.join(model_dir, "air_quality_model.pkl")
     joblib.dump(final_model, model_output_path)
     print(f"🎯 Erfolg! Modell mit allen Spalten trainiert und gespeichert unter:\n -> {model_output_path}")
+
+    # --- 6. AUTOMATISCHER UPLOAD ZU HUGGING FACE SPACES ---
+    if hf_token:
+        try:
+            print("\n📦 Pushe aktuelles Champion-Modell (.pkl) direkt zu Hugging Face Spaces...")
+            from huggingface_hub import HfApi
+            api = HfApi()
+            api.upload_file(
+                token=hf_token,
+                path_or_fileobj=model_output_path,
+                path_in_repo="models/air_quality_model.pkl",
+                repo_id="Balumi13/Air-Quality",
+                repo_type="space"
+            )
+            print("✅ Modell-Upload zu Hugging Face erfolgreich!")
+        except Exception as hf_err:
+            print(f"⚠️ Hugging Face Modell-Upload fehlgeschlagen: {hf_err}")
+    else:
+        print("\n⚠️ Kein HF_TOKEN in der Umgebung gefunden. Überspringe Upload zu Hugging Face.")
 
 if __name__ == "__main__":
     train_model()
