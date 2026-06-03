@@ -11,13 +11,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Data Storage (Das ist der wichtige Teil!)
-# Wir ignorieren den gesamten Datenordner lokal
+# Data Storage
 data/
 
 models/*.pkl
 
-# Aber wir wollen, dass die Ordnerstruktur auf GitHub existiert
-# (Dafür nutzt man einen Trick mit .gitkeep, falls nötig)
-
+# backup of local files that are no longer needed
 zlocal_vault/
