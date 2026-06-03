@@ -40,8 +40,7 @@ MLOPS-AIR-QUALITY-PROJECT/
 |   ├── training_pipeline/              # model training and evaluation
 |   └── app.py                          # Streamlit frontend
 |
-├── tests/
-|   └── test_features.py                # unit tests for transform_batch
+├── tests/                              # unit tests for transform_batch
 |
 ├── .env.example                        # environment variable template
 ├── .gitignore
@@ -62,6 +61,7 @@ MLOPS-AIR-QUALITY-PROJECT/
 | `.env.example`           | Template for environment variables                    |
 | `Dockerfile`             | Container deployment specification                    |
 | `requirements.txt`       | Pinned Python dependencies                            |
+| `tests/`                 | Unit tests for feature pipeline transformation
 
 ---
 
@@ -89,18 +89,32 @@ MLOPS-AIR-QUALITY-PROJECT/
 
 ## Tech Stack
 
-* Python 3.10
-* OpenAQ API
-* Hopsworks Feature Store
-* XGBoost
-* Streamlit
-* GitHub Actions
-* Docker
-* Hugging Face Spaces
-
-
+| Area | Technology |
+|------|------------|
+| Data source | OpenAQ API |
+| Data processing | Python, Pandas |
+| Feature storage | Hopsworks Feature Store |
+| Model training | XGBoost, scikit-learn |
+| Frontend | Streamlit |
+| Containerization | Docker |
+| Deployment | Hugging Face Spaces |
+| Automation | GitHub Actions |
+| CI | pytest |
 
 
 
 ---
+
+## Automated Unit Testing
+The core feature engineering and data transformation logic (`transform_batch`) 
+is covered by automated unit tests, split across multiple files:
+
+- **test_input_validation** – empty and invalid inputs
+- **test_lag_features** – lag correctness (1h, 6h, 24h)
+- **test_rolling_features** – rolling average and variance
+- **test_imputation** – missing value handling via ffill
+- **test_feature_completeness** – required columns and time features
+
+This ensures that features like rolling averages, lags, and data imputations 
+remain mathematically correct even if structural source modifications occur.
 

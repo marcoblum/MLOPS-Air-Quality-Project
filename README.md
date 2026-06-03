@@ -206,11 +206,10 @@ The Streamlit interface will connect directly to the cloud feature store and pro
 ---
 
 ## Automated Unit Testing
-The core feature engineering and data transformation logic (`transform_batch`) is fully covered by automated unit tests. This ensures that features like rolling averages, lags, and data imputations remain mathematically correct even if structural source modifications occur.
 
 To execute the test suite locally, run the following command in your terminal:
 
 ```bash
 pytest
 ```
-
+For a detailed breakdown of the test suite, refer to the [Project Overview](PROJECT_OVERVIEW.md#automated-unit-testing).
