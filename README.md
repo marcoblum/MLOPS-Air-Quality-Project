@@ -205,7 +205,7 @@ The Streamlit interface will connect directly to the cloud feature store and pro
 
 ---
 
-## Automated Unit Testing
+## 6. Automated Unit Testing
 
 To execute the test suite locally, run the following command in your terminal:
 
