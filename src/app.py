@@ -5,7 +5,6 @@ import plotly.express as px
 import os
 
 st.set_page_config(page_title="Zürich Air Quality Monitor", layout="wide")
-
 st.title("Air Quality Zürich - Live Monitor & Forecast")
 st.write("This dashboard displays data collected hourly by an MLOps pipeline and served via Hopsworks.")
 
@@ -20,11 +19,10 @@ def load_data():
         if os.path.exists(path):
             df_live = pd.read_parquet(path)
             break
-            
+                
     if df_live is None:
         try:
             import hopsworks
-            # Nutze st.secrets für Hugging Face Cloud-Kompatibilität, falls .env fehlt
             api_key = os.getenv("HOPSWORKS_API_KEY") or st.secrets.get("HOPSWORKS_API_KEY")
             if api_key:
                 project = hopsworks.login(api_key_value=api_key, project="AeroPredict")
@@ -34,20 +32,18 @@ def load_data():
         except Exception as e:
             st.error(f"Error loading live data from Hopsworks: {e}")
 
-    # --- GEÄNDERT: Die 2-Jahres-Historie wird nun direkt aus Hopsworks geladen ---
     df_history = None
     try:
         import hopsworks
         api_key = os.getenv("HOPSWORKS_API_KEY") or st.secrets.get("HOPSWORKS_API_KEY")
         if api_key:
-            # Separater, langlebigerer Cache für die historischen Daten via innerer Funktion
             @st.cache_data(ttl=86400)
             def fetch_history_from_cloud(key):
                 proj = hopsworks.login(api_key_value=key, project="AeroPredict")
                 store = proj.get_feature_store()
                 fg = store.get_feature_group(name="air_quality_features_1", version=1)
                 return fg.read()
-                
+                            
             df_history = fetch_history_from_cloud(api_key)
     except Exception as e:
         st.warning(f"Could not load historical data from Hopsworks Feature Store: {e}")
@@ -78,6 +74,18 @@ def fill_missing_features(df):
     if df is None: return None
     df.columns = [c.lower() for c in df.columns]
     
+    # Kritischer Fix: Absicherung, dass alle physikalischen Spalten existieren
+    required_base_wetter = {
+        'temperature': 15.0,
+        'relativehumidity': 70.0,
+        'wind_speed': 5.0,
+        'wind_direction': 180.0,
+        'surface_pressure': 1013.25
+    }
+    for col, default_val in required_base_wetter.items():
+        if col not in df.columns:
+            df[col] = default_val
+
     # Robuste Imputation für Live-Daten-Wackler vor der Berechnung
     cols_to_impute = ['pm25', 'temperature', 'relativehumidity', 'wind_speed', 'wind_direction', 'surface_pressure']
     for col in cols_to_impute:
@@ -95,27 +103,27 @@ def fill_missing_features(df):
             df['pm25_lag_6h'] = df['pm25'].shift(6).bfill()
         if 'pm25_lag_24h' not in df.columns:
             df['pm25_lag_24h'] = df['pm25'].shift(24).bfill()
-        
-        # Interaktionen absichern
-        if 'wind_speed' in df.columns:
-            df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'] + 1.0)
-        if 'temperature' in df.columns and 'relativehumidity' in df.columns:
-            df['temp_humidity_interaction'] = df['temperature'] * df['relativehumidity']
-            
+                
+        # Interaktionen absichern (Jetzt garantiert, da Spalten oben erzeugt wurden)
+        df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'] + 1.0)
+        df['temp_humidity_interaction'] = df['temperature'] * df['relativehumidity']
+                
     return df
 
 df_live = fill_missing_features(df_live)
 
 if df_live is not None and not df_live.empty:
     time_col = 'timestamp'
+    
+    # Zeit-Features generieren BEVOR die Modellprüfung stattfindet
     df_live['hour'] = df_live[time_col].dt.hour
     df_live['day_of_week'] = df_live[time_col].dt.dayofweek
-
+    
     latest = df_live.iloc[-1]
     prev = df_live.iloc[-2] if len(df_live) > 1 else latest
-    
+        
     st.write(f"**Last station update:** {latest[time_col]}")
-    
+        
     # --- SECTION 1: CURRENT MEASUREMENTS ---
     st.subheader("Current Measurements")
     m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
@@ -144,13 +152,12 @@ if df_live is not None and not df_live.empty:
     # --- SECTION 3: AI FORECAST ---
     st.divider()
     st.subheader("Predictive Health Management: 24h Forecast Comparison")
-    
+        
     model_path = "models/air_quality_model.pkl"
     if os.path.exists(model_path):
         try:
             model = joblib.load(model_path)
             
-            # FIX: wind_direction hinzugefügt, damit das Set exakt mit den 14 Trainings-Features übereinstimmt
             feature_cols = [
                 'pm25_rolling_24h_mean', 'pm25_rolling_24h_var', 
                 'pm25_lag_1h', 'pm25_lag_6h', 'pm25_lag_24h',    
@@ -158,20 +165,20 @@ if df_live is not None and not df_live.empty:
                 'surface_pressure', 'wind_speed', 'wind_direction',
                 'pm25_wind_interaction', 'temp_humidity_interaction'
             ]
-            
+                        
             if all(col in df_live.columns for col in feature_cols):
                 X_input = df_live[feature_cols].tail(1)
                 prediction = model.predict(X_input)[0]
-                
+                                
                 p_col1, p_col2 = st.columns(2)
-                
+                                
                 if 'pm25_rolling_24h_mean' in latest:
                     p_col1.metric(
                         label="Current State: PM2.5 Average (Last 24h)", 
                         value=f"{latest['pm25_rolling_24h_mean']:.2f} µg/m³",
                         delta="Historical Baseline"
                     )
-                
+                                
                 delta_zukunft = prediction - latest['pm25_rolling_24h_mean'] if 'pm25_rolling_24h_mean' in latest else 0.0
                 p_col2.metric(
                     label="Model Forecast: Expected PM2.5 Average (Next 24h)", 
@@ -179,7 +186,7 @@ if df_live is not None and not df_live.empty:
                     delta=f"{delta_zukunft:+.2f} µg/m³ vs. today",
                     delta_color="inverse"
                 )
-                
+                                
                 st.markdown("##### **Preventive Recommendation for Asthma Patients:**")
                 if prediction < 10.0:
                     st.success("🟢 **Safe:** Forecasted particulate levels are low. No restrictions on outdoor activities.")
@@ -187,7 +194,7 @@ if df_live is not None and not df_live.empty:
                     st.warning("🟡 **Moderate:** Levels are slightly elevated. Sensitive individuals should monitor prolonged physical exertion outdoors.")
                 else:
                     st.error("🔴 **High Risk:** Elevated levels forecasted. Asthma patients and vulnerable groups are advised to reduce intense outdoor activities over the next 24 hours.")
-                    
+                                
             else:
                 st.error("Required features for the forecast are missing from the live dataset.")
                 missing = [c for c in feature_cols if c not in df_live.columns]
