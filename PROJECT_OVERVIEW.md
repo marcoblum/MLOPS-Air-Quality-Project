@@ -114,6 +114,7 @@ is covered by automated unit tests, split across multiple files:
 - **test_rolling_features** – rolling average and variance
 - **test_imputation** – missing value handling via ffill
 - **test_feature_completeness** – required columns and time features
+- **test_app_fallback** – validates model schema compliance and defensive fallback imputation under incomplete live data streams
 
 This ensures that features like rolling averages, lags, and data imputations 
 remain mathematically correct even if structural source modifications occur.
