@@ -40,7 +40,15 @@ Duplicate the provided template to create your local environment file:
 cp .env.example .env
 ```
 
-Open the newly created `.env` file and fill in your private API keys.
+Open the newly created `.env` file and fill in your private values. The complete set of variables is:
+
+```env
+OPENAQ_API_KEY=your_key_here
+HOPSWORKS_API_KEY=your_key_here
+HOPSWORKS_PROJECT=your_unique_project_name
+HF_TOKEN=your_token_here
+HF_REPO_ID=your_username/your_space_name
+```
 
 ### Required Credentials
 
@@ -57,7 +65,7 @@ OPENAQ_API_KEY=your_key_here
 #### Hopsworks API Key
 
 1. Log in to your Hopsworks account.
-2. Navigate to **Account Settings → API Keys**.
+2. Navigate to **Account Settings -> API Keys**.
 3. Create a key with project access.
 4. Add it to:
 
@@ -65,15 +73,40 @@ OPENAQ_API_KEY=your_key_here
 HOPSWORKS_API_KEY=your_key_here
 ```
 
+#### Hopsworks Project Name
+
+> **Important:** On Hopsworks Serverless (`app.hopsworks.ai`), project names are **globally unique across the entire platform**, not just within your own account. You therefore **cannot** reuse the original author's project name (`AeroPredict`) - it already exists and is owned by another account. Trying to create it manually will fail with a *"project already exists"* error, and the pipeline will not be able to log in to it.
+
+1. Log in to your Hopsworks account.
+2. Create a **new project** with a name that is unique to you (e.g., `AeroPredict_<yourname>`).
+3. Add that exact name to your `.env` file:
+
+```env
+HOPSWORKS_PROJECT=your_unique_project_name
+```
+
+The feature pipeline, the training pipeline, and the app all read this variable when connecting to the Feature Store, so make sure it matches the project you created.
+
 #### Hugging Face Token
 
 1. Log in to your Hugging Face account.
-2. Open **Settings → Access Tokens** in Hugging Face.
+2. Open **Settings -> Access Tokens** in Hugging Face.
 3. Create a token with **Write** permissions.
 4. Add it to:
 
 ```env
 HF_TOKEN=your_token_here
+```
+
+#### Hugging Face Space (HF_REPO_ID)
+
+> **Important:** The upload calls in the pipeline and training scripts push files into an **existing** Space - they do **not** create one automatically. You must create your own Space first (see Section 3, Phase 1) before referencing it here, otherwise the upload step will fail (the rest of the pipeline still runs and only prints a warning).
+
+1. Create a Hugging Face Space under your own account (Section 3, Phase 1).
+2. Add its identifier in the form `username/space_name` to your `.env` file:
+
+```env
+HF_REPO_ID=your_username/your_space_name
 ```
 
 ---
@@ -89,10 +122,12 @@ To deploy the inference application to the cloud, follow these step-by-step inst
 3. Choose the **Blank** template and set the Space visibility to **Public**.
 4. Click **Create Space** to initialize the infrastructure.
 
+> The full identifier of this Space (e.g., `your_username/Air-Quality`) is the value you put in `HF_REPO_ID` in your `.env` file.
+
 ### Phase 2: Upload Project Files
 To get the application running, you need to upload the core project files into the main directory (Root) of your new Space:
 
-1. In your Space, click on the **Files** tab and select **Add file → Upload files**.
+1. In your Space, click on the **Files** tab and select **Add file -> Upload files**.
 2. Drag and drop the following files and folders from your local file explorer:
    * The `src/` folder (which contains your code and the `app.py`)
    * `Dockerfile`
@@ -107,11 +142,15 @@ Because your private `.env` file is excluded via `.gitignore` for security reaso
 
 1. In your Hugging Face Space, navigate to the **Settings** tab.
 2. Scroll down to the **Variables and secrets** section and click on **New secret**.
-3. Add the following three secrets using your personal keys:
+3. Add the following secrets using your personal values:
    * **Key:** `OPENAQ_API_KEY` / **Value:** *Your OpenAQ API Key*
    * **Key:** `HOPSWORKS_API_KEY` / **Value:** *Your Hopsworks API Key*
+   * **Key:** `HOPSWORKS_PROJECT` / **Value:** *Your unique Hopsworks project name*
    * **Key:** `HF_TOKEN` / **Value:** *Your Hugging Face Token (with Write access)*
+   * **Key:** `HF_REPO_ID` / **Value:** *Your Space identifier (`username/space_name`)*
 4. Click **Save** for each entry.
+
+> The inference app itself only needs `HOPSWORKS_API_KEY` and `HOPSWORKS_PROJECT` to read from the Feature Store. `HF_TOKEN` and `HF_REPO_ID` are used by the feature and training pipelines (locally or via the scheduled GitHub Action) that push data and the model back to the Space.
 
 Once the secrets are saved, click on the **Factory rebuild** button at the top of the settings page to restart the container with the active environment variables.
 
@@ -120,6 +159,8 @@ Once the secrets are saved, click on the **Factory rebuild** button at the top o
 ## 4. Local Execution
 
 If you prefer to run the complete pipeline locally, follow the steps below.
+
+> **Before you start:** Make sure you have (1) created your own **Hopsworks project** and set `HOPSWORKS_PROJECT`, and (2) created your own **Hugging Face Space** and set `HF_REPO_ID` (see Sections 2 and 3). Both must exist before the first run.
 
 ### Create and Activate a Virtual Environment
 
@@ -155,19 +196,33 @@ pip install -r requirements.txt
 
 ---
 
-### Run Feature Ingestion & Engineering
+### Step 1 - Initial Backfill (run once)
+
+When you set up the project for the first time, your Hopsworks Feature Store is still empty. Before any hourly run or model training will work, you must populate it **once** with the historical dataset (~2 years of data). This is what the `--backfill` flag is for:
+
+```bash
+python src/feature_pipeline/run_feature_pipeline.py --backfill
+```
+
+This step iterates over the full history in chunks and uploads the aggregated dataset to the `air_quality_features_1` feature group inside the project defined by `HOPSWORKS_PROJECT`. It only needs to be run **once** during initial setup and takes considerably longer than a normal run.
+
+### Step 2 - Hourly Feature Ingestion & Engineering
+
+After the initial backfill, the regular (live) run fetches only the most recent days, computes features, and appends them to the same feature group. This is the command used by the scheduled GitHub Action:
 
 ```bash
 python src/feature_pipeline/run_feature_pipeline.py
 ```
 
-### Run Model Training & Validation
+### Step 3 - Run Model Training & Validation
+
+Once the Feature Store contains data, train the forecasting model:
 
 ```bash
 python src/training_pipeline/train_model.py
 ```
 
-### Launch the Streamlit Inference App
+### Step 4 - Launch the Streamlit Inference App
 
 ```bash
 streamlit run src/app.py

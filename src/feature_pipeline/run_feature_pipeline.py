@@ -11,7 +11,9 @@ import time
 load_dotenv()
 API_KEY = os.getenv("OPENAQ_API_KEY")
 HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN") 
+HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT")
+HF_TOKEN = os.getenv("HF_TOKEN")
+HF_REPO_ID = os.getenv("HF_REPO_ID") 
 
 if os.name == 'nt':
     if not os.path.exists("C:\\tmp"):
@@ -69,11 +71,9 @@ def transform_batch(raw_data, is_live_mode=True):
     df = df.sort_index()
     df.columns = [c.lower() for c in df.columns]
 
-    # Imputation gegen kurze API-Wackler
     if 'pm25' in df.columns:
         df['pm25'] = df['pm25'].ffill(limit=3).bfill(limit=3)
 
-    # --- ADVANCED FEATURE ENGINEERING ---
     if 'pm25' in df.columns:
         df['pm25_rolling_24h_mean'] = df['pm25'].rolling(window=24, min_periods=1).mean()
         df['pm25_rolling_24h_var'] = df['pm25'].rolling(window=24, min_periods=1).var().fillna(0)
@@ -93,7 +93,6 @@ def transform_batch(raw_data, is_live_mode=True):
     df = df.reset_index()
     df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-    # --- LIVE-METEOROLOGIE DAZUMISCHEN ---
     if len(df) > 0:
         min_ts = df['timestamp'].min()
         max_ts = df['timestamp'].max()
@@ -105,17 +104,14 @@ def transform_batch(raw_data, is_live_mode=True):
             df = pd.merge(df, weather_df, on='timestamp_match', how='left')
             df = df.drop(columns=['timestamp_match'])
             
-            # --- DATENTYP-FIX FÜR HOPSWORKS COMPLIANCE ---
             if 'wind_direction' in df.columns:
                 df['wind_direction'] = df['wind_direction'].astype('float64')
             if 'wind_speed' in df.columns:
                 df['wind_speed'] = df['wind_speed'].astype('float64')
             
-            # Wind-Features & Interaktionen
             df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'].fillna(0) + 1.0)
             df['temp_humidity_interaction'] = df['temperature'].fillna(0) * df['relativehumidity'].fillna(0)
 
-    # Im stündlichen Live-Modus schmeißen wir Zeilen ohne Target (die aktuellsten 24h) NICHT weg!
     if is_live_mode:
         cols_to_check = ['pm25', 'pm25_rolling_24h_mean']
     else:
@@ -148,7 +144,6 @@ def run_pipeline():
     headers = {"X-API-Key": API_KEY}
     now = datetime.utcnow()
 
-    # Nur noch das Hopsworks-Backfill Flag bleibt aktiv für die Reproduzierbarkeit
     is_backfill = len(sys.argv) > 1 and sys.argv[1] == "--backfill"
 
     if is_backfill:
@@ -160,10 +155,11 @@ def run_pipeline():
         step_days = 14  
         print(f"Hole Daten der letzten {step_days} Tage für stündliche Feature-Berechnung (inkl. Wind)...")
 
-    # --- HOPSWORKS VERBINDUNG ---
     print(f"Verbinde mit Hopsworks...")
     try:
-        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
+        if not HOPSWORKS_PROJECT:
+            raise ValueError("HOPSWORKS_PROJECT fehlt in der .env Datei!")
+        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project=HOPSWORKS_PROJECT)
         fs = project.get_feature_store()
         air_quality_fg = fs.get_or_create_feature_group(
             name="air_quality_features_1",
@@ -181,7 +177,6 @@ def run_pipeline():
     os.makedirs("data/processed", exist_ok=True)
     all_batches = []
 
-    # --- HAUPT-LOOP ---
     for i in range(steps):
         if not is_backfill:
             date_to   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -228,7 +223,6 @@ def run_pipeline():
             if not success:
                 print(f"  -> ❌ Schritt final fehlgeschlagen für Sensor {label} nach {retries} Versuchen.")
 
-        # Live-Modus Flag setzen (bestimmt dropna-Verhalten)
         df_batch = transform_batch(batch_data, is_live_mode=(not is_backfill))
 
         if df_batch is None or len(df_batch) == 0:
@@ -239,19 +233,16 @@ def run_pipeline():
         all_batches.append(df_batch)
         time.sleep(0.5)
 
-    # --- FINALE VERARBEITUNG ---
     if all_batches:
-        print("\n📊 Aggregiere und bereinige alle gesammelten Batches...")
+        print("\nAggregiere und bereinige alle gesammelten Batches...")
         df_final = pd.concat(all_batches).drop_duplicates(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
         print(f" -> Bereinigter Datensatz enthält {len(df_final)} eindeutige Zeilen.")
 
         if is_backfill:
-            # --- PFAD B: HOPSWORKS BACKFILL UPLOAD ---
-            print(f"\n📤 Starte finalen Gesamt-Upload des 2-Jahres-Backfills an Hopsworks...")
+            print(f"\nStarte finalen Gesamt-Upload des 2-Jahres-Backfills an Hopsworks...")
             upload_to_hopsworks(df_final, air_quality_fg, "[Kompletter Backfill]")
         
         else:
-            # --- PFAD A: STÜNDLICHER LIVE-RUN (GitHub Action) ---
             local_parquet_path = "data/processed/features_latest.parquet"
             df_final.to_parquet(local_parquet_path)
             print(f"\n✅ Live-Daten lokal gesichert: {local_parquet_path} ({len(df_final)} Zeilen)")
@@ -265,7 +256,7 @@ def run_pipeline():
                 api.upload_file(
                     path_or_fileobj=local_parquet_path,
                     path_in_repo="data/processed/features_latest.parquet",
-                    repo_id="Balumi13/Air-Quality",
+                    repo_id=HF_REPO_ID,
                     repo_type="space"
                 )
                 print("✅ Direkt-Upload zu Hugging Face erfolgreich!")

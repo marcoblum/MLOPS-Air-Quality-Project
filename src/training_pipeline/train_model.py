@@ -19,18 +19,21 @@ def train_model():
     print("--- START TRAINING PIPELINE (HOPSWORKS LIVE RETRAIN MODE) ---")
     load_dotenv()
     HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY")
-    HF_TOKEN = os.getenv("HF_TOKEN")  # Hier ist es grossgeschrieben
+    HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT")
+    HF_TOKEN = os.getenv("HF_TOKEN")
+    HF_REPO_ID = os.getenv("HF_REPO_ID") 
     
-    # 1. DATEN DIREKT AUS HOPSWORKS LADEN
-    print("🔄 Verbinde mit Hopsworks Feature Store...")
+    print("Verbinde mit Hopsworks Feature Store...")
     if not HOPSWORKS_API_KEY:
         raise ValueError("❌ HOPSWORKS_API_KEY fehlt in der .env Datei!")
+    if not HOPSWORKS_PROJECT:                                          
+        raise ValueError("❌ HOPSWORKS_PROJECT fehlt in der .env Datei!")
 
     try:
-        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project="AeroPredict")
+        project = hopsworks.login(api_key_value=HOPSWORKS_API_KEY, project=HOPSWORKS_PROJECT)
         fs = project.get_feature_store()
         
-        print("📥 Lese aggregierten Gold-Datensatz aus 'air_quality_features_1'...")
+        print("Lese aggregierten Gold-Datensatz aus 'air_quality_features_1'...")
         air_quality_fg = fs.get_feature_group(name="air_quality_features_1", version=1)
         df = air_quality_fg.read()
         print(f"✅ {len(df)} Zeilen erfolgreich direkt via REST geladen.")
@@ -39,13 +42,11 @@ def train_model():
         print(f"❌ Kritischer Fehler beim Laden von Hopsworks: {e}")
         return
 
-    # Spaltennamen normalisieren & chronologisch sortieren
     df.columns = [c.lower() for c in df.columns]
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values(by='timestamp').reset_index(drop=True)
 
-    # --- 2. ROBUSTE IMPUTATION (API-LÜCKEN SCHLIESSEN) ---
-    print("🩹 Schliesse API-Lücken im Datensatz durch Vorwärts- und Rückwärts-Imputation...")
+    print("Schliesse API-Lücken im Datensatz durch Vorwärts- und Rückwärts-Imputation...")
     cols_to_fill = [
         'pm25', 'temperature', 'relativehumidity', 'wind_speed', 
         'wind_direction', 'surface_pressure', 'pm25_rolling_24h_mean', 'pm25_rolling_24h_var'
@@ -54,17 +55,14 @@ def train_model():
         if col in df.columns:
             df[col] = df[col].ffill().bfill()
 
-    # Interaktionsterme nach der Imputation frisch absichern, falls dort NaNs entstanden sind
     if 'wind_speed' in df.columns and 'pm25_lag_1h' in df.columns:
         df['pm25_lag_1h'] = df['pm25_lag_1h'].ffill().bfill()
         df['pm25_wind_interaction'] = df['pm25_lag_1h'] / (df['wind_speed'] + 1.0)
     if 'temperature' in df.columns and 'relativehumidity' in df.columns:
         df['temp_humidity_interaction'] = df['temperature'] * df['relativehumidity']
 
-    # Diagnostik-Print
     print("Vorhandene Spalten im Datensatz:", df.columns.tolist())
 
-    # --- 3. FEATURE SELECTION ---
     features = [
         'pm25_rolling_24h_mean', 'pm25_rolling_24h_var', 
         'pm25_lag_1h', 'pm25_lag_6h', 'pm25_lag_24h',    
@@ -73,18 +71,15 @@ def train_model():
         'pm25_wind_interaction', 'temp_humidity_interaction'
     ]
     
-    # Fallback-Check (Sicherheit aus deinem Originalskript)
     features = [f for f in features if f in df.columns]
     target = 'target_24h_mean'
     
-    # Zeilen ohne Features oder Target droppen (betrifft primär die aktuellsten 24h)
     df = df.dropna(subset=features + [target])
     print(f"Daten erfolgreich vorbereitet. Trainings-Datensatz enthält {len(df)} Zeilen.")
 
     X = df[features]
     y = df[target]
 
-    # --- 4. CROSS VALIDATION ---
     tscv = TimeSeriesSplit(n_splits=5)
     maes, rmses, r2s = [], [], []
     
@@ -115,8 +110,7 @@ def train_model():
     print(f"Mean RMSE      : {np.mean(rmses):.2f} µg/m³")
     print(f"Mean MAE       : {np.mean(maes):.2f} µg/m³")
     
-    # --- 5. FINALES CHAMPION MODELL TRAINIEREN ---
-    print("\nTrainiere finales Champion-Modell auf allen verfügbaren Daten...")
+    print("\nTrainiere finales Modell auf allen verfügbaren Daten...")
     final_model = XGBRegressor(
         n_estimators=400, 
         learning_rate=0.01, 
@@ -128,33 +122,31 @@ def train_model():
     )
     final_model.fit(X, y)
     
-    # Relativen Pfad für die Ordnerstruktur auflösen
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     model_dir = os.path.join(base_dir, "models")
     os.makedirs(model_dir, exist_ok=True)
     
     model_output_path = os.path.join(model_dir, "air_quality_model.pkl")
     joblib.dump(final_model, model_output_path)
-    print(f"🎯 Erfolg! Modell mit allen Spalten trainiert und gespeichert unter:\n -> {model_output_path}")
+    print(f"Erfolg! Modell mit allen Spalten trainiert und gespeichert unter:\n -> {model_output_path}")
 
-    # --- 6. AUTOMATISCHER UPLOAD ZU HUGGING FACE SPACES ---
-    if HF_TOKEN:  # FIX: Jetzt korrekt in Grossbuchstaben abgefragt
+    if HF_TOKEN and HF_REPO_ID:
         try:
-            print("\n📦 Pushe aktuelles Champion-Modell (.pkl) direkt zu Hugging Face Spaces...")
+            print("\nPushe aktuelles Champion-Modell (.pkl) direkt zu Hugging Face Spaces...")
             from huggingface_hub import HfApi
             api = HfApi()
             api.upload_file(
-                token=HF_TOKEN,  # FIX: Grossbuchstaben
+                token=HF_TOKEN,
                 path_or_fileobj=model_output_path,
                 path_in_repo="models/air_quality_model.pkl",
-                repo_id="Balumi13/Air-Quality",
+                repo_id=HF_REPO_ID,
                 repo_type="space"
             )
             print("✅ Modell-Upload zu Hugging Face erfolgreich!")
         except Exception as hf_err:
             print(f"⚠️ Hugging Face Modell-Upload fehlgeschlagen: {hf_err}")
     else:
-        print("\n⚠️ Kein HF_TOKEN in der Umgebung gefunden. Überspringe Upload zu Hugging Face.")
+        print("\n⚠️ Kein HF_TOKEN oder HF_REPO_ID gefunden. Überspringe Upload zu Hugging Face.")
 
 if __name__ == "__main__":
     train_model()

@@ -24,8 +24,9 @@ def load_data():
         try:
             import hopsworks
             api_key = os.getenv("HOPSWORKS_API_KEY") or st.secrets.get("HOPSWORKS_API_KEY")
+            project_name = os.getenv("HOPSWORKS_PROJECT") or st.secrets.get("HOPSWORKS_PROJECT")
             if api_key:
-                project = hopsworks.login(api_key_value=api_key, project="AeroPredict")
+                project = hopsworks.login(api_key_value=api_key, project=project_name)
                 fs = project.get_feature_store()
                 air_quality_fg = fs.get_feature_group(name="air_quality_features_1", version=1)
                 df_live = air_quality_fg.read()
@@ -36,15 +37,16 @@ def load_data():
     try:
         import hopsworks
         api_key = os.getenv("HOPSWORKS_API_KEY") or st.secrets.get("HOPSWORKS_API_KEY")
+        project_name = os.getenv("HOPSWORKS_PROJECT") or st.secrets.get("HOPSWORKS_PROJECT")
         if api_key:
             @st.cache_data(ttl=86400)
-            def fetch_history_from_cloud(key):
-                proj = hopsworks.login(api_key_value=key, project="AeroPredict")
+            def fetch_history_from_cloud(key, proj_name):
+                proj = hopsworks.login(api_key_value=key, project=proj_name)
                 store = proj.get_feature_store()
                 fg = store.get_feature_group(name="air_quality_features_1", version=1)
                 return fg.read()
                             
-            df_history = fetch_history_from_cloud(api_key)
+            df_history = fetch_history_from_cloud(api_key, project_name)
     except Exception as e:
         st.warning(f"Could not load historical data from Hopsworks Feature Store: {e}")
 
