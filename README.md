@@ -147,6 +147,8 @@ Because your private `.env` file is excluded via `.gitignore` for security reaso
    * **Key:** `HOPSWORKS_PROJECT` / **Value:** *Your unique Hopsworks project name*
 4. Click **Save** for each entry.
 
+> **How to enter the value:** The **Value** field takes only the raw value - no variable name, no `=`, and no quotation marks. For example, for `HOPSWORKS_PROJECT` enter exactly `AeroPredict`, **not** `HOPSWORKS_PROJECT="AeroPredict"`. (This differs from the `.env` file, where you write the full `KEY=value` line.)
+
 Once the secrets are saved, click on the **Factory rebuild** button at the top of the settings page to restart the container with the active environment variables.
 
 ---
@@ -164,6 +166,8 @@ The repository ships with a scheduled GitHub Action that runs the feature pipeli
    * **Name:** `HOPSWORKS_PROJECT` / **Secret:** *Your unique Hopsworks project name*
    * **Name:** `HF_TOKEN` / **Secret:** *Your Hugging Face Token (with Write access)*
    * **Name:** `HF_REPO_ID` / **Secret:** *Your Space identifier (`username/space_name`)*
+
+> **How to enter the secret:** The **Secret** field takes only the raw value - no name, no `=`, and no quotation marks. For example, for `HF_REPO_ID` enter exactly `your_username/your_space_name`, **not** `HF_REPO_ID="your_username/your_space_name"`. The same applies to every secret here.
 
 ---
 

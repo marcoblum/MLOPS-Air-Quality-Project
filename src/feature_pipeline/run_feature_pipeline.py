@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import time
 
 load_dotenv()
+print(f"DEBUG IN RUNNER - Projekt: '{os.getenv('HOPSWORKS_PROJECT')}'")
+print(f"DEBUG IN RUNNER - Key vorhanden?: {os.getenv('HOPSWORKS_API_KEY') is not None}")
 API_KEY = os.getenv("OPENAQ_API_KEY")
 HOPSWORKS_API_KEY = os.getenv("HOPSWORKS_API_KEY")
 HOPSWORKS_PROJECT = os.getenv("HOPSWORKS_PROJECT")
