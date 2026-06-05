@@ -138,27 +138,38 @@ To get the application running, you need to upload the core project files into t
 Hugging Face will automatically detect the `Dockerfile`, install the pinned dependencies, and launch the active Streamlit app in the cloud.
 
 ### Phase 3: Configure Environment Variables (Secrets)
-Because your private `.env` file is excluded via `.gitignore` for security reasons, you must inject your API keys directly into the Hugging Face infrastructure so the cloud container can authenticate with your data services:
+Because your private `.env` file is excluded via `.gitignore` for security reasons, you must inject your credentials directly into the Hugging Face infrastructure so the cloud container can authenticate with the Feature Store:
 
 1. In your Hugging Face Space, navigate to the **Settings** tab.
 2. Scroll down to the **Variables and secrets** section and click on **New secret**.
-3. Add the following secrets using your personal values:
-   * **Key:** `OPENAQ_API_KEY` / **Value:** *Your OpenAQ API Key*
+3. Add the following two secrets using your personal values:
    * **Key:** `HOPSWORKS_API_KEY` / **Value:** *Your Hopsworks API Key*
    * **Key:** `HOPSWORKS_PROJECT` / **Value:** *Your unique Hopsworks project name*
-   * **Key:** `HF_TOKEN` / **Value:** *Your Hugging Face Token (with Write access)*
-   * **Key:** `HF_REPO_ID` / **Value:** *Your Space identifier (`username/space_name`)*
 4. Click **Save** for each entry.
-
-> The inference app itself only needs `HOPSWORKS_API_KEY` and `HOPSWORKS_PROJECT` to read from the Feature Store. `HF_TOKEN` and `HF_REPO_ID` are used by the feature and training pipelines (locally or via the scheduled GitHub Action) that push data and the model back to the Space.
 
 Once the secrets are saved, click on the **Factory rebuild** button at the top of the settings page to restart the container with the active environment variables.
 
 ---
 
-## 4. Local Execution
+## 4. GitHub Actions (Automated Hourly Pipeline)
 
-If you prefer to run the complete pipeline locally, follow the steps below.
+The repository ships with a scheduled GitHub Action that runs the feature pipeline (and, depending on your workflow, the training pipeline) automatically. Because the Action runs in a clean CI environment without your local `.env`, you must register the same credentials as **GitHub repository secrets**.
+
+> **Important:** GitHub Actions secrets are a **separate** store from the Hugging Face Space secrets configured in Section 3, Phase 3. Setting one does **not** set the other - the Action needs its own copy.
+
+1. In your GitHub repository, go to **Settings -> Secrets and variables -> Actions**.
+2. Click **New repository secret** and add the following, one by one:
+   * **Name:** `OPENAQ_API_KEY` / **Secret:** *Your OpenAQ API Key*
+   * **Name:** `HOPSWORKS_API_KEY` / **Secret:** *Your Hopsworks API Key*
+   * **Name:** `HOPSWORKS_PROJECT` / **Secret:** *Your unique Hopsworks project name*
+   * **Name:** `HF_TOKEN` / **Secret:** *Your Hugging Face Token (with Write access)*
+   * **Name:** `HF_REPO_ID` / **Secret:** *Your Space identifier (`username/space_name`)*
+
+---
+
+## 5. Local Execution (Initial Pipeline Setup)
+
+These steps are run **once locally** to bootstrap the pipeline: they populate the Feature Store with the initial backfill and train the first model. This local run is required even if you deploy to the cloud, because the scheduled GitHub Action only handles the recurring hourly updates - not the one-time backfill. Once this initial setup is done, everything runs automatically via the Action (Section 4) and the deployed app (Section 3).
 
 > **Before you start:** Make sure you have (1) created your own **Hopsworks project** and set `HOPSWORKS_PROJECT`, and (2) created your own **Hugging Face Space** and set `HF_REPO_ID` (see Sections 2 and 3). Both must exist before the first run.
 
@@ -230,7 +241,7 @@ streamlit run src/app.py
 
 ---
 
-## 5. Containerized Execution (Docker)
+## 6. Containerized Execution (Docker)
 
 To run the inference application inside a production-like environment (e.g., similar to Hugging Face Spaces), use the provided Docker configuration.
 
@@ -260,7 +271,7 @@ The Streamlit interface will connect directly to the cloud feature store and pro
 
 ---
 
-## 6. Automated Unit Testing
+## 7. Automated Unit Testing
 
 To execute the test suite locally, run the following command in your terminal:
 
@@ -268,3 +279,9 @@ To execute the test suite locally, run the following command in your terminal:
 pytest
 ```
 For a detailed breakdown of the test suite, refer to the [Project Overview](PROJECT_OVERVIEW.md#automated-unit-testing).
+
+---
+
+## You're All Set
+
+That's it - the pipeline is initialized, the model is trained, and the automated hourly updates are in place. Your live dashboard is now running in your Hugging Face Space, where you can watch the latest measurements and 24h forecast update on their own.

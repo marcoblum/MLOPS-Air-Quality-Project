@@ -3,6 +3,9 @@ import pandas as pd
 import joblib
 import plotly.express as px
 import os
+from dotenv import load_dotenv   # <-- NEU
+
+load_dotenv()
 
 st.set_page_config(page_title="Zürich Air Quality Monitor", layout="wide")
 st.title("Air Quality Zürich - Live Monitor & Forecast")
