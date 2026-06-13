@@ -12,4 +12,5 @@ streamlit
 plotly
 xgboost
 huggingface_hub
+mlflow==2.*
 pytest==8.1.1

@@ -18,3 +18,6 @@ models/*.pkl
 
 # backup of local files that are no longer needed
 zlocal_vault/
+
+mlflow.db
+mlruns/

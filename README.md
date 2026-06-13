@@ -209,6 +209,15 @@ python src/training_pipeline/train_model.py
 
 This produces the trained model file at `models/air_quality_model.pkl`. If `HF_TOKEN` and `HF_REPO_ID` are set and your Space already exists (Section 3), the script also pushes this model directly into your Space at `models/air_quality_model.pkl` - so the deployed app finds it automatically. The model is retrained and re-pushed on every run.
 
+
+Each run is also tracked with **MLflow**: hyperparameters, the cross-validation metrics (R², RMSE, MAE) and the model are logged, and a new version of `air_quality_xgboost` is registered in the MLflow Model Registry (stored locally in `mlflow.db`). To inspect the runs:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Then open http://localhost:5000 and select the `air_quality_forecasting` experiment.
+
 ### Step 4 - Launch the Streamlit Inference App
 
 ```bash
@@ -254,9 +263,19 @@ Once the secrets are saved, click on the **Factory rebuild** button at the top o
 
 ---
 
-## 6. GitHub Actions (Automated Hourly Pipeline)
+## 6. GitHub Actions (Automated Hourly Pipeline) - Optional
+
 
 The repository ships with a scheduled GitHub Action that runs the feature pipeline (and, depending on your workflow, the training pipeline) automatically. Because the Action runs in a clean CI environment without your local `.env`, you must register the same credentials as **GitHub repository secrets**.
+
+
+
+
+> **Prerequisite:** GitHub Actions only run inside a GitHub repository **you own**. A plain `git clone` of the original repository (Section 1) just copies the code to your machine - it does **not** give you a repository whose Actions you control, and Hugging Face reads from your uploaded Space files, not from GitHub. To use the automated pipeline, first **fork** this repository to your own GitHub account (or create a new repository and push the code, including the `.github/workflows/` folder). The steps below then configure *your* repository.
+>
+> **Note:** On a forked repository, GitHub disables Actions by default. Open the **Actions** tab of your fork once and enable the workflows, otherwise the scheduled run will never start.
+>
+> This section is optional: the local setup (Section 4) and the deployed Space (Section 5) work without it. You only need it if you want the feature pipeline to run automatically on a schedule.
 
 > **Important:** GitHub Actions secrets are a **separate** store from the Hugging Face Space secrets configured in Section 5, Phase 2. Setting one does **not** set the other - the Action needs its own copy.
 

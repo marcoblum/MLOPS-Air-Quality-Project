@@ -12,6 +12,45 @@ This system operates on a three-tier **FTI (Feature, Training, Inference)** arch
 
 A GitHub Actions workflow fetches live air quality telemetry hourly via the **OpenAQ API**, engineering features directly into the **Hopsworks Feature Store**. An offline training pipeline extracts these features to train an optimized **XGBoost regressor**, tracking artifacts back to the model registry. Finally, a containerized **Streamlit web application** serves live inference by streaming the latest state directly from the cloud feature store, ensuring real-time predictions without relying on local data persistence.
 
+
+
+## Architecture (FTI)
+
+```mermaid
+flowchart TB
+    OA["OpenAQ API<br/>PM2.5, temperature, humidity"]
+    OM["Open-Meteo API<br/>wind, pressure"]
+
+    subgraph FP["1 - Feature Pipeline (run_feature_pipeline.py)"]
+        FE["Fetch hourly + one-time backfill<br/>Feature engineering: lags 1/6/24h,<br/>rolling mean + variance, interactions,<br/>hour and weekday"]
+    end
+
+    FS[("Hopsworks Feature Store<br/>air_quality_features_1")]
+
+    subgraph TP["2 - Training Pipeline (train_model.py)"]
+        TR["XGBoost + TimeSeriesSplit CV<br/>save air_quality_model.pkl"]
+    end
+
+    ML[("MLflow<br/>tracking + model registry")]
+
+    subgraph IP["3 - Inference (app.py, Streamlit)"]
+        UI["Load model + latest features<br/>24h PM2.5 forecast dashboard"]
+    end
+
+    HF["Hugging Face Spaces (Docker)"]
+    GHA(["GitHub Actions - hourly schedule"])
+
+    OA --> FE
+    OM --> FE
+    FE --> FS
+    FS --> TR
+    TR -->|log run + register version| ML
+    TR -->|push model.pkl| UI
+    FS -->|latest features| UI
+    GHA -. triggers .-> FE
+    UI -. deployed on .-> HF
+```
+
 ---
 
 
@@ -100,6 +139,7 @@ MLOPS-AIR-QUALITY-PROJECT/
 | Deployment | Hugging Face Spaces |
 | Automation | GitHub Actions |
 | CI | pytest |
+| Experiment tracking | MLflow (tracking + model registry) |
 
 
 
