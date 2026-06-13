@@ -36,8 +36,22 @@ cd MLOPS-AIR-QUALITY-PROJECT
 
 Duplicate the provided template to create your local environment file:
 
+#### Linux / macOS
+
 ```bash
 cp .env.example .env
+```
+
+#### Windows (Command Prompt)
+
+```bash
+copy .env.example .env
+```
+
+#### Windows (PowerShell)
+
+```bash
+Copy-Item .env.example .env
 ```
 
 Open the newly created `.env` file and fill in your private values. The complete set of variables is:
@@ -54,9 +68,10 @@ HF_REPO_ID=your_username/your_space_name
 
 #### OpenAQ API Key
 
-1. Register on OpenAQ.
-2. Generate an API key. (You may use this guide: https://docs.openaq.org/using-the-api/quick-start)
-3. Add it to:
+1. Log in to your [OpenAQ](https://explore.openaq.org) account.
+2. Open your account settings at https://explore.openaq.org/account.
+3. Copy your personal API key (you can rotate it there if needed).
+4. Add it to:
 
 ```env
 OPENAQ_API_KEY=your_key_here
@@ -64,9 +79,9 @@ OPENAQ_API_KEY=your_key_here
 
 #### Hopsworks API Key
 
-1. Log in to your Hopsworks account.
+1. Log in to your [Hopsworks](https://www.hopsworks.ai/) account.
 2. Navigate to **Account Settings -> API Keys**.
-3. Create a key with project access.
+3. Create a key and select the **featurestore**, **project**, and **job** scopes. A key with only the **project** scope is not sufficient and leads to a cryptic `'Response' object has no attribute 'error_code'` error when the pipeline tries to connect to the Feature Store.
 4. Add it to:
 
 ```env
@@ -77,7 +92,7 @@ HOPSWORKS_API_KEY=your_key_here
 
 > **Important:** On Hopsworks Serverless (`app.hopsworks.ai`), project names are **globally unique across the entire platform**, not just within your own account. You therefore **cannot** reuse the original author's project name (`AeroPredict`) - it already exists and is owned by another account. Trying to create it manually will fail with a *"project already exists"* error, and the pipeline will not be able to log in to it.
 
-1. Log in to your Hopsworks account.
+1. Log in to your [Hopsworks](https://www.hopsworks.ai/) account.
 2. Create a **new project** with a name that is unique to you (e.g., `AeroPredict_<yourname>`).
 3. Add that exact name to your `.env` file:
 
@@ -89,8 +104,8 @@ The feature pipeline, the training pipeline, and the app all read this variable 
 
 #### Hugging Face Token
 
-1. Log in to your Hugging Face account.
-2. Open **Settings -> Access Tokens** in Hugging Face.
+1. Log in to your [Hugging Face](https://huggingface.co/) account.
+2. Open **Settings -> Access Tokens**.
 3. Create a token with **Write** permissions.
 4. Add it to:
 
@@ -100,9 +115,9 @@ HF_TOKEN=your_token_here
 
 #### Hugging Face Space (HF_REPO_ID)
 
-> **Important:** The upload calls in the pipeline and training scripts push files into an **existing** Space - they do **not** create one automatically. You must create your own Space first (see Section 3, Phase 1) before referencing it here, otherwise the upload step will fail (the rest of the pipeline still runs and only prints a warning).
+> **Important:** The upload calls in the pipeline and training scripts push files into an **existing** Space - they do **not** create one automatically. You must create your own Space first (see Section 3) before referencing it here, otherwise the upload step will fail (the rest of the pipeline still runs and only prints a warning).
 
-1. Create a Hugging Face Space under your own account (Section 3, Phase 1).
+1. Create a Hugging Face Space under your own account (see Section 3).
 2. Add its identifier in the form `username/space_name` to your `.env` file:
 
 ```env
@@ -111,69 +126,24 @@ HF_REPO_ID=your_username/your_space_name
 
 ---
 
+## 3. Create the Space on Hugging Face
 
-## 3. Cloud Deployment (Hugging Face Spaces)
+You will deploy the inference application to this Space later (Section 5). Create the empty Space now, because its identifier is the `HF_REPO_ID` value you entered in your `.env` file above, and the local pipeline pushes data into it.
 
-To deploy the inference application to the cloud, follow these step-by-step instructions to mirror the production environment.
-
-### Phase 1: Create the Space on Hugging Face
-1. Log in to your **Hugging Face** account and click on **New Space**.
-2. Name your Space (e.g., `Air-Quality`) and select **Streamlit** as the SDK.
+1. Log in to your [**Hugging Face**](https://huggingface.co/) account and click on **New Space**.
+2. Name your Space (e.g., `Air-Quality`) and select **Docker** as the SDK. The SDK defaults to **Gradio**, so you have to switch it to **Docker** - only then do the Docker templates become available.
 3. Choose the **Blank** template and set the Space visibility to **Public**.
 4. Click **Create Space** to initialize the infrastructure.
 
 > The full identifier of this Space (e.g., `your_username/Air-Quality`) is the value you put in `HF_REPO_ID` in your `.env` file.
 
-### Phase 2: Upload Project Files
-To get the application running, you need to upload the core project files into the main directory (Root) of your new Space:
-
-1. In your Space, click on the **Files** tab and select **Add file -> Upload files**.
-2. Drag and drop the following files and folders from your local file explorer:
-   * The `src/` folder (which contains your code and the `app.py`)
-   * `Dockerfile`
-   * `requirements.txt`
-   * `.gitignore`
-3. Scroll down and click **Commit changes to main**.
-
-Hugging Face will automatically detect the `Dockerfile`, install the pinned dependencies, and launch the active Streamlit app in the cloud.
-
-### Phase 3: Configure Environment Variables (Secrets)
-Because your private `.env` file is excluded via `.gitignore` for security reasons, you must inject your credentials directly into the Hugging Face infrastructure so the cloud container can authenticate with the Feature Store:
-
-1. In your Hugging Face Space, navigate to the **Settings** tab.
-2. Scroll down to the **Variables and secrets** section and click on **New secret**.
-3. Add the following two secrets using your personal values:
-   * **Key:** `HOPSWORKS_API_KEY` / **Value:** *Your Hopsworks API Key*
-   * **Key:** `HOPSWORKS_PROJECT` / **Value:** *Your unique Hopsworks project name*
-4. Click **Save** for each entry.
-
-> **How to enter the value:** The **Value** field takes only the raw value - no variable name, no `=`, and no quotation marks. For example, for `HOPSWORKS_PROJECT` enter exactly `AeroPredict`, **not** `HOPSWORKS_PROJECT="AeroPredict"`. (This differs from the `.env` file, where you write the full `KEY=value` line.)
-
-Once the secrets are saved, click on the **Factory rebuild** button at the top of the settings page to restart the container with the active environment variables.
+You will upload the actual project files (code, model, Dockerfile) in Section 5, after the model has been trained locally.
 
 ---
 
-## 4. GitHub Actions (Automated Hourly Pipeline)
+## 4. Local Execution (Initial Pipeline Setup)
 
-The repository ships with a scheduled GitHub Action that runs the feature pipeline (and, depending on your workflow, the training pipeline) automatically. Because the Action runs in a clean CI environment without your local `.env`, you must register the same credentials as **GitHub repository secrets**.
-
-> **Important:** GitHub Actions secrets are a **separate** store from the Hugging Face Space secrets configured in Section 3, Phase 3. Setting one does **not** set the other - the Action needs its own copy.
-
-1. In your GitHub repository, go to **Settings -> Secrets and variables -> Actions**.
-2. Click **New repository secret** and add the following, one by one:
-   * **Name:** `OPENAQ_API_KEY` / **Secret:** *Your OpenAQ API Key*
-   * **Name:** `HOPSWORKS_API_KEY` / **Secret:** *Your Hopsworks API Key*
-   * **Name:** `HOPSWORKS_PROJECT` / **Secret:** *Your unique Hopsworks project name*
-   * **Name:** `HF_TOKEN` / **Secret:** *Your Hugging Face Token (with Write access)*
-   * **Name:** `HF_REPO_ID` / **Secret:** *Your Space identifier (`username/space_name`)*
-
-> **How to enter the secret:** The **Secret** field takes only the raw value - no name, no `=`, and no quotation marks. For example, for `HF_REPO_ID` enter exactly `your_username/your_space_name`, **not** `HF_REPO_ID="your_username/your_space_name"`. The same applies to every secret here.
-
----
-
-## 5. Local Execution (Initial Pipeline Setup)
-
-These steps are run **once locally** to bootstrap the pipeline: they populate the Feature Store with the initial backfill and train the first model. This local run is required even if you deploy to the cloud, because the scheduled GitHub Action only handles the recurring hourly updates - not the one-time backfill. Once this initial setup is done, everything runs automatically via the Action (Section 4) and the deployed app (Section 3).
+These steps are run **once locally** to bootstrap the pipeline: they populate the Feature Store with the initial backfill and train the first model. This local run is required even if you deploy to the cloud, because the trained model is produced here, and the scheduled GitHub Action (Section 6) only handles the recurring hourly updates - not the one-time backfill. Once this initial setup is done, everything runs automatically via the Action (Section 6) and the deployed app (Section 5).
 
 > **Before you start:** Make sure you have (1) created your own **Hopsworks project** and set `HOPSWORKS_PROJECT`, and (2) created your own **Hugging Face Space** and set `HF_REPO_ID` (see Sections 2 and 3). Both must exist before the first run.
 
@@ -237,33 +207,84 @@ Once the Feature Store contains data, train the forecasting model:
 python src/training_pipeline/train_model.py
 ```
 
+This produces the trained model file at `models/air_quality_model.pkl`. If `HF_TOKEN` and `HF_REPO_ID` are set and your Space already exists (Section 3), the script also pushes this model directly into your Space at `models/air_quality_model.pkl` - so the deployed app finds it automatically. The model is retrained and re-pushed on every run.
+
 ### Step 4 - Launch the Streamlit Inference App
 
 ```bash
 streamlit run src/app.py
 ```
 
+Once it starts, open the app in your browser at http://localhost:8501 (Streamlit's default port).
+
 ---
 
-## 6. Containerized Execution (Docker)
+## 5. Deploy to the Space (Upload Files & Secrets)
+
+Now that the model has been trained locally (Section 4, Step 3), upload the project files - including the `models/` folder - to the Space you created in Section 3, and configure the cloud secrets.
+
+### Phase 1: Upload Project Files
+To get the application running, upload the core project files into the main directory (Root) of your Space:
+
+1. In your Space, click on the **Files** tab and select **Contribute -> Upload files**.
+2. Drag and drop the following files and folders from your local file explorer:
+   * The `src/` folder (which contains your code and the `app.py`)
+   * `Dockerfile`
+   * `requirements.txt`
+   * `.gitignore`
+3. Scroll down and click **Commit changes to main**.
+
+> **Note:** You normally do **not** need to upload the `models/` folder manually - the training step (Section 4, Step 3) already pushed `models/air_quality_model.pkl` into your Space automatically. Upload it by hand only as a fallback if the deployed app still shows `No trained model found at models/air_quality_model.pkl` (which happens if training ran without `HF_TOKEN`/`HF_REPO_ID` set, or before the Space existed).
+
+Hugging Face will automatically detect the `Dockerfile`, install the pinned dependencies, and launch the active Streamlit app in the cloud.
+
+### Phase 2: Configure Environment Variables (Secrets)
+Because your private `.env` file is excluded via `.gitignore` for security reasons, you must inject your credentials directly into the Hugging Face infrastructure so the cloud container can authenticate with the Feature Store:
+
+1. In your Hugging Face Space, navigate to the **Settings** tab.
+2. Scroll down to the **Variables and secrets** section and click on **New secret**.
+3. Add the following two secrets using your personal values:
+   * **Key:** `HOPSWORKS_API_KEY` / **Value:** *Your Hopsworks API Key*
+   * **Key:** `HOPSWORKS_PROJECT` / **Value:** *Your unique Hopsworks project name*
+4. Click **Save** for each entry.
+
+> **How to enter the value:** The **Value** field takes only the raw value - no variable name, no `=`, and no quotation marks. For example, for `HOPSWORKS_PROJECT` enter exactly `AeroPredict`, **not** `HOPSWORKS_PROJECT="AeroPredict"`. (This differs from the `.env` file, where you write the full `KEY=value` line.)
+
+Once the secrets are saved, click on the **Factory rebuild** button at the top of the settings page to restart the container with the active environment variables.
+
+---
+
+## 6. GitHub Actions (Automated Hourly Pipeline)
+
+The repository ships with a scheduled GitHub Action that runs the feature pipeline (and, depending on your workflow, the training pipeline) automatically. Because the Action runs in a clean CI environment without your local `.env`, you must register the same credentials as **GitHub repository secrets**.
+
+> **Important:** GitHub Actions secrets are a **separate** store from the Hugging Face Space secrets configured in Section 5, Phase 2. Setting one does **not** set the other - the Action needs its own copy.
+
+1. In your GitHub repository, go to **Settings -> Secrets and variables -> Actions**.
+2. Click **New repository secret** and add the following, one by one:
+   * **Name:** `OPENAQ_API_KEY` / **Secret:** *Your OpenAQ API Key*
+   * **Name:** `HOPSWORKS_API_KEY` / **Secret:** *Your Hopsworks API Key*
+   * **Name:** `HOPSWORKS_PROJECT` / **Secret:** *Your unique Hopsworks project name*
+   * **Name:** `HF_TOKEN` / **Secret:** *Your Hugging Face Token (with Write access)*
+   * **Name:** `HF_REPO_ID` / **Secret:** *Your Space identifier (`username/space_name`)*
+
+> **How to enter the secret:** The **Secret** field takes only the raw value - no name, no `=`, and no quotation marks. For example, for `HF_REPO_ID` enter exactly `your_username/your_space_name`, **not** `HF_REPO_ID="your_username/your_space_name"`. The same applies to every secret here.
+
+---
+
+## 7. Containerized Execution (Docker)
 
 To run the inference application inside a production-like environment (e.g., similar to Hugging Face Spaces), use the provided Docker configuration.
 
-### Build the Docker Image
+### Build and Run with Docker Compose
 
 ```bash
-docker build -t air-quality-app .
+docker compose up --build
 ```
 
-### Run the Container
+This builds the image and starts the container. 
 
-```bash
-docker run --env-file .env -p 7860:7860 air-quality-app
-```
-
----
-
-## Access the Application
+### Access the Application
 
 Once the container has started successfully, open your browser and navigate to:
 
@@ -273,9 +294,11 @@ http://localhost:7860
 
 The Streamlit interface will connect directly to the cloud feature store and provide real-time PM2.5 predictions.
 
+> **Note:** This is the **Docker** port. When you run the app locally with `streamlit run src/app.py` (Section 4, Step 4), it uses Streamlit's default port `8501` instead.
+
 ---
 
-## 7. Automated Unit Testing
+## 8. Automated Unit Testing
 
 To execute the test suite locally, run the following command in your terminal:
 
